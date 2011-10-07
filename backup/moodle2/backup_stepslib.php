@@ -310,7 +310,7 @@ class backup_module_structure_step extends backup_structure_step {
             'added', 'score', 'indent', 'visible',
             'visibleold', 'groupmode', 'groupingid', 'groupmembersonly',
             'completion', 'completiongradeitemnumber', 'completionview', 'completionexpected',
-            'availablefrom', 'availableuntil', 'showavailability'));
+            'availablefrom', 'availableuntil', 'showavailability', 'showdescription'));
 
         $availinfo = new backup_nested_element('availability_info');
         $availability = new backup_nested_element('availability', array('id'), array(
@@ -319,8 +319,9 @@ class backup_module_structure_step extends backup_structure_step {
         // attach format plugin structure to $module element, only one allowed
         $this->add_plugin_structure('format', $module, false);
 
-        // attach plagiarism plugin structure to $module element, only one allowed
-        $this->add_plugin_structure('plagiarism', $module, false);
+        // attach plagiarism plugin structure to $module element, there can be potentially
+        // many plagiarism plugins storing information about this course
+        $this->add_plugin_structure('plagiarism', $module, true);
 
         // Define the tree
         $module->add_child($availinfo);
@@ -421,8 +422,9 @@ class backup_course_structure_step extends backup_structure_step {
         // course reports can save course data if required
         $this->add_plugin_structure('coursereport', $course, true);
 
-        // attach plagiarism plugin structure to $course element, only one allowed
-        $this->add_plugin_structure('plagiarism', $course, false);
+        // attach plagiarism plugin structure to $course element, there can be potentially
+        // many plagiarism plugins storing information about this course
+        $this->add_plugin_structure('plagiarism', $course, true);
 
         // Build the tree
 

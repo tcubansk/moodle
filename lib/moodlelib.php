@@ -284,6 +284,29 @@ define('PARAM_TIMEZONE', 'timezone');
  */
 define('PARAM_CLEANFILE', 'file');
 
+/**
+ * PARAM_COMPONENT is used for full component names (aka frankenstyle) such as 'mod_forum', 'core_rating', 'auth_ldap'.
+ * Short legacy subsystem names and module names are accepted too ex: 'forum', 'rating', 'user'.
+ * Only lowercase ascii letters, numbers and underscores are allowed, it has to start with a letter.
+ * NOTE: numbers and underscores are strongly discouraged in plugin names!
+ */
+define('PARAM_COMPONENT', 'component');
+
+/**
+ * PARAM_AREA is a name of area used when addressing files, comments, ratings, etc.
+ * It is usually used together with context id and component.
+ * Only lowercase ascii letters, numbers and underscores are allowed, it has to start with a letter.
+ */
+define('PARAM_AREA', 'area');
+
+/**
+ * PARAM_PLUGIN is used for plugin names such as 'forum', 'glossary', 'ldap', 'radius', 'paypal', 'completionstatus'.
+ * Only lowercase ascii letters, numbers and underscores are allowed, it has to start with a letter.
+ * NOTE: numbers and underscores are strongly discouraged in plugin names! Underscores are forbidden in module names.
+ */
+define('PARAM_PLUGIN', 'plugin');
+
+
 /// Web Services ///
 
 /**
@@ -383,6 +406,9 @@ define('FEATURE_RATE', 'rate');
 /** True if module supports backup/restore of moodle2 format */
 define('FEATURE_BACKUP_MOODLE2', 'backup_moodle2');
 
+/** True if module can show description on course main page */
+define('FEATURE_SHOW_DESCRIPTION', 'showdescription');
+
 /** Unspecified module archetype */
 define('MOD_ARCHETYPE_OTHER', 0);
 /** Resource-like type module */
@@ -448,17 +474,15 @@ define('MOODLE_OFFICIAL_MOBILE_SERVICE', 'moodle_mobile_app');
  * used like this:
  *    $id = required_param('id', PARAM_INT);
  *
- * Please note the $type parameter is now required,
- * for now PARAM_CLEAN is used for backwards compatibility only.
+ * Please note the $type parameter is now required and the value can not be array.
  *
  * @param string $parname the name of the page parameter we want
  * @param string $type expected type of parameter
  * @return mixed
  */
 function required_param($parname, $type) {
-    if (!isset($type)) {
-        debugging('required_param() requires $type to be specified.');
-        $type = PARAM_CLEAN; // for now let's use this deprecated type
+    if (func_num_args() != 2 or empty($parname) or empty($type)) {
+        throw new coding_exception('required_param() requires $parname and $type to be specified (parameter: '.$parname.')');
     }
     if (isset($_POST[$parname])) {       // POST has precedence
         $param = $_POST[$parname];
@@ -468,7 +492,57 @@ function required_param($parname, $type) {
         print_error('missingparam', '', '', $parname);
     }
 
+    if (is_array($param)) {
+        debugging('Invalid array parameter detected in required_param(): '.$parname);
+        // TODO: switch to fatal error in Moodle 2.3
+        //print_error('missingparam', '', '', $parname);
+        return required_param_array($parname, $type);
+    }
+
     return clean_param($param, $type);
+}
+
+/**
+ * Returns a particular array value for the named variable, taken from
+ * POST or GET.  If the parameter doesn't exist then an error is
+ * thrown because we require this variable.
+ *
+ * This function should be used to initialise all required values
+ * in a script that are based on parameters.  Usually it will be
+ * used like this:
+ *    $ids = required_param_array('ids', PARAM_INT);
+ *
+ *  Note: arrays of arrays are not supported, only alphanumeric keys with _ and - are supported
+ *
+ * @param string $parname the name of the page parameter we want
+ * @param string $type expected type of parameter
+ * @return array
+ */
+function required_param_array($parname, $type) {
+    if (func_num_args() != 2 or empty($parname) or empty($type)) {
+        throw new coding_exception('required_param_array() requires $parname and $type to be specified (parameter: '.$parname.')');
+    }
+    if (isset($_POST[$parname])) {       // POST has precedence
+        $param = $_POST[$parname];
+    } else if (isset($_GET[$parname])) {
+        $param = $_GET[$parname];
+    } else {
+        print_error('missingparam', '', '', $parname);
+    }
+    if (!is_array($param)) {
+        print_error('missingparam', '', '', $parname);
+    }
+
+    $result = array();
+    foreach($param as $key=>$value) {
+        if (!preg_match('/^[a-z0-9_-]+$/i', $key)) {
+            debugging('Invalid key name in required_param_array() detected: '.$key.', parameter: '.$parname);
+            continue;
+        }
+        $result[$key] = clean_param($value, $type);
+    }
+
+    return $result;
 }
 
 /**
@@ -480,8 +554,7 @@ function required_param($parname, $type) {
  * used like this:
  *    $name = optional_param('name', 'Fred', PARAM_TEXT);
  *
- * Please note $default and $type parameters are now required,
- * for now PARAM_CLEAN is used for backwards compatibility only.
+ * Please note the $type parameter is now required and the value can not be array.
  *
  * @param string $parname the name of the page parameter we want
  * @param mixed  $default the default value to return if nothing is found
@@ -489,9 +562,8 @@ function required_param($parname, $type) {
  * @return mixed
  */
 function optional_param($parname, $default, $type) {
-    if (!isset($type)) {
-        debugging('optional_param() requires $default and $type to be specified.');
-        $type = PARAM_CLEAN; // for now let's use this deprecated type
+    if (func_num_args() != 3 or empty($parname) or empty($type)) {
+        throw new coding_exception('optional_param() requires $parname, $default and $type to be specified (parameter: '.$parname.')');
     }
     if (!isset($default)) {
         $default = null;
@@ -505,7 +577,59 @@ function optional_param($parname, $default, $type) {
         return $default;
     }
 
+    if (is_array($param)) {
+        debugging('Invalid array parameter detected in required_param(): '.$parname);
+        // TODO: switch to $default in Moodle 2.3
+        //return $default;
+        return optional_param_array($parname, $default, $type);
+    }
+
     return clean_param($param, $type);
+}
+
+/**
+ * Returns a particular array value for the named variable, taken from
+ * POST or GET, otherwise returning a given default.
+ *
+ * This function should be used to initialise all optional values
+ * in a script that are based on parameters.  Usually it will be
+ * used like this:
+ *    $ids = optional_param('id', array(), PARAM_INT);
+ *
+ *  Note: arrays of arrays are not supported, only alphanumeric keys with _ and - are supported
+ *
+ * @param string $parname the name of the page parameter we want
+ * @param mixed  $default the default value to return if nothing is found
+ * @param string $type expected type of parameter
+ * @return array
+ */
+function optional_param_array($parname, $default, $type) {
+    if (func_num_args() != 3 or empty($parname) or empty($type)) {
+        throw new coding_exception('optional_param_array() requires $parname, $default and $type to be specified (parameter: '.$parname.')');
+    }
+
+    if (isset($_POST[$parname])) {       // POST has precedence
+        $param = $_POST[$parname];
+    } else if (isset($_GET[$parname])) {
+        $param = $_GET[$parname];
+    } else {
+        return $default;
+    }
+    if (!is_array($param)) {
+        debugging('optional_param_array() expects array parameters only: '.$parname);
+        return $default;
+    }
+
+    $result = array();
+    foreach($param as $key=>$value) {
+        if (!preg_match('/^[a-z0-9_-]+$/i', $key)) {
+            debugging('Invalid key name in optional_param_array() detected: '.$key.', parameter: '.$parname);
+            continue;
+        }
+        $result[$key] = clean_param($value, $type);
+    }
+
+    return $result;
 }
 
 /**
@@ -516,7 +640,7 @@ function optional_param($parname, $default, $type) {
  * Objects and classes are not accepted.
  *
  * @param mixed $param
- * @param int $type PARAM_ constant
+ * @param string $type PARAM_ constant
  * @param bool $allownull are nulls valid value?
  * @param string $debuginfo optional debug information
  * @return mixed the $param value converted to PHP type or invalid_parameter_exception
@@ -543,6 +667,34 @@ function validate_param($param, $type, $allownull=NULL_NOT_ALLOWED, $debuginfo='
 }
 
 /**
+ * Makes sure array contains only the allowed types,
+ * this function does not validate array key names!
+ * <code>
+ * $options = clean_param($options, PARAM_INT);
+ * </code>
+ *
+ * @param array $param the variable array we are cleaning
+ * @param string $type expected format of param after cleaning.
+ * @param bool $recursive clean recursive arrays
+ * @return array
+ */
+function clean_param_array(array $param = null, $type, $recursive = false) {
+    $param = (array)$param; // convert null to empty array
+    foreach ($param as $key => $value) {
+        if (is_array($value)) {
+            if ($recursive) {
+                $param[$key] = clean_param_array($value, $type, true);
+            } else {
+                throw new coding_exception('clean_param_array() can not process multidimensional arrays when $recursive is false.');
+            }
+        } else {
+            $param[$key] = clean_param($value, $type);
+        }
+    }
+    return $param;
+}
+
+/**
  * Used by {@link optional_param()} and {@link required_param()} to
  * clean the variables and/or cast to specific types, based on
  * an options field.
@@ -552,19 +704,21 @@ function validate_param($param, $type, $allownull=NULL_NOT_ALLOWED, $debuginfo='
  * </code>
  *
  * @param mixed $param the variable we are cleaning
- * @param int $type expected format of param after cleaning.
+ * @param string $type expected format of param after cleaning.
  * @return mixed
  */
 function clean_param($param, $type) {
 
     global $CFG;
 
-    if (is_array($param)) {              // Let's loop
-        $newparam = array();
-        foreach ($param as $key => $value) {
-            $newparam[$key] = clean_param($value, $type);
+    if (is_array($param)) {
+        throw new coding_exception('clean_param() can not process arrays, please use clean_param_array() instead.');
+    } else if (is_object($param)) {
+        if (method_exists($param, '__toString')) {
+            $param = $param->__toString();
+        } else {
+            throw new coding_exception('clean_param() can not process objects, please use clean_param_array() instead.');
         }
-        return $newparam;
     }
 
     switch ($type) {
@@ -689,6 +843,34 @@ function clean_param($param, $type) {
             } while (false);
             // easy, just strip all tags, if we ever want to fix orphaned '&' we have to do that in format_string()
             return strip_tags($param);
+
+        case PARAM_COMPONENT:
+            // we do not want any guessing here, either the name is correct or not
+            // please note only normalised component names are accepted
+            if (!preg_match('/^[a-z]+(_[a-z][a-z0-9_]*)?[a-z0-9]$/', $param)) {
+                return '';
+            }
+            if (strpos($param, '__') !== false) {
+                return '';
+            }
+            if (strpos($param, 'mod_') === 0) {
+                // module names must not contain underscores because we need to differentiate them from invalid plugin types
+                if (substr_count($param, '_') != 1) {
+                    return '';
+                }
+            }
+            return $param;
+
+        case PARAM_PLUGIN:
+        case PARAM_AREA:
+            // we do not want any guessing here, either the name is correct or not
+            if (!preg_match('/^[a-z][a-z0-9_]*[a-z0-9]$/', $param)) {
+                return '';
+            }
+            if (strpos($param, '__') !== false) {
+                return '';
+            }
+            return $param;
 
         case PARAM_SAFEDIR:      // Remove everything not a-zA-Z0-9_-
             return preg_replace('/[^a-zA-Z0-9_-]/i', '', $param);
@@ -857,8 +1039,10 @@ function clean_param($param, $type) {
             }
 
         case PARAM_AUTH:
-            $param = clean_param($param, PARAM_SAFEDIR);
-            if (exists_auth_plugin($param)) {
+            $param = clean_param($param, PARAM_PLUGIN);
+            if (empty($param)) {
+                return '';
+            } else if (exists_auth_plugin($param)) {
                 return $param;
             } else {
                 return '';
@@ -873,8 +1057,10 @@ function clean_param($param, $type) {
             }
 
         case PARAM_THEME:
-            $param = clean_param($param, PARAM_SAFEDIR);
-            if (file_exists("$CFG->dirroot/theme/$param/config.php")) {
+            $param = clean_param($param, PARAM_PLUGIN);
+            if (empty($param)) {
+                return '';
+            } else if (file_exists("$CFG->dirroot/theme/$param/config.php")) {
                 return $param;
             } else if (!empty($CFG->themedir) and file_exists("$CFG->themedir/$param/config.php")) {
                 return $param;
@@ -1177,7 +1363,9 @@ function unset_config($name, $plugin=NULL) {
 function unset_all_config_for_plugin($plugin) {
     global $DB;
     $DB->delete_records('config_plugins', array('plugin' => $plugin));
-    $DB->delete_records_select('config', 'name LIKE ?', array($plugin . '_%'));
+    $like = $DB->sql_like('name', '?', true, true, false, '|');
+    $params = array($DB->sql_like_escape($plugin.'_', '|') . '%');
+    $DB->delete_records_select('config', $like, $params);
     return true;
 }
 
@@ -1239,14 +1427,14 @@ function purge_all_caches() {
     get_string_manager()->reset_caches();
 
     // purge all other caches: rss, simplepie, etc.
-    remove_dir($CFG->dataroot.'/cache', true);
+    remove_dir($CFG->cachedir.'', true);
 
     // make sure cache dir is writable, throws exception if not
-    make_upload_directory('cache');
+    make_cache_directory('');
 
     // hack: this script may get called after the purifier was initialised,
     // but we do not want to verify repeatedly this exists in each call
-    make_upload_directory('cache/htmlpurifier');
+    make_cache_directory('htmlpurifier');
 
     clearstatcache();
 }
@@ -3462,7 +3650,7 @@ function truncate_userinfo($info) {
  *
  * Any plugin that needs to purge user data should register the 'user_deleted' event.
  *
- * @param object $user User object before delete
+ * @param stdClass $user full user object before delete
  * @return boolean always true
  */
 function delete_user($user) {
@@ -3508,6 +3696,9 @@ function delete_user($user) {
 
     // last course access not necessary either
     $DB->delete_records('user_lastaccess', array('userid'=>$user->id));
+
+    // force logout - may fail if file based sessions used, sorry
+    session_kill_user($user->id);
 
     // now do a final accesslib cleanup - removes all role assignments in user context and context itself
     delete_context(CONTEXT_USER, $user->id);
@@ -3635,8 +3826,12 @@ function authenticate_user_login($username, $password) {
                 $user = update_user_record($username);
             }
         } else {
-            // if user not found, create him
-            $user = create_user_record($username, $password, $auth);
+            // if user not found and user creation is not disabled, create it
+            if (empty($CFG->authpreventaccountcreation)) {
+                $user = create_user_record($username, $password, $auth);
+            } else {
+                continue;
+            }
         }
 
         $authplugin->sync_roles($user);
@@ -4163,7 +4358,6 @@ function remove_course_contents($courseid, $showfeedback = true) {
         'course_display' => 'course',
         'backup_courses' => 'courseid', // Delete scheduled backup stuff
         'user_lastaccess' => 'courseid',
-        'backup_log' => 'courseid'
     );
     foreach ($tablestoclear as $table => $col) {
         $DB->delete_records($table, array($col=>$course->id));
@@ -5129,7 +5323,7 @@ function get_file_storage() {
         $trashdirdir = $CFG->dataroot.'/trashdir';
     }
 
-    $fs = new file_storage($filedir, $trashdirdir, "$CFG->dataroot/temp/filestorage", $CFG->directorypermissions, $CFG->filepermissions);
+    $fs = new file_storage($filedir, $trashdirdir, "$CFG->tempdir/filestorage", $CFG->directorypermissions, $CFG->filepermissions);
 
     return $fs;
 }
@@ -5551,7 +5745,7 @@ function get_string_manager($forcereload=false) {
         if (empty($CFG->early_install_lang)) {
 
             if (empty($CFG->langcacheroot)) {
-                $langcacheroot = $CFG->dataroot . '/cache/lang';
+                $langcacheroot = $CFG->cachedir . '/lang';
             } else {
                 $langcacheroot = $CFG->langcacheroot;
             }
@@ -5563,7 +5757,7 @@ function get_string_manager($forcereload=false) {
             }
 
             if (empty($CFG->langmenucachefile)) {
-                $langmenucache = $CFG->dataroot . '/cache/languages';
+                $langmenucache = $CFG->cachedir . '/languages';
             } else {
                 $langmenucache = $CFG->langmenucachefile;
             }
@@ -6012,7 +6206,7 @@ class core_string_manager implements string_manager {
         }
 
         $countries = $this->load_component_strings('core_countries', $lang);
-        textlib_get_instance()->asort($countries);
+        collatorlib::asort($countries);
         if (!$returnall and !empty($CFG->allcountrycodes)) {
             $enabled = explode(',', $CFG->allcountrycodes);
             $return = array();
@@ -6184,12 +6378,12 @@ class core_string_manager implements string_manager {
 
             if (!empty($CFG->langcache) and !empty($this->menucache)) {
                 // cache the list so that it can be used next time
-                textlib_get_instance()->asort($languages);
+                collatorlib::asort($languages);
                 file_put_contents($this->menucache, json_encode($languages));
             }
         }
 
-        textlib_get_instance()->asort($languages);
+        collatorlib::asort($languages);
 
         return $languages;
     }
@@ -6608,7 +6802,6 @@ function get_list_of_charsets() {
 /**
  * Returns a list of valid and compatible themes
  *
- * @global object
  * @return array
  */
 function get_list_of_themes() {
@@ -6626,7 +6819,8 @@ function get_list_of_themes() {
         $theme = theme_config::load($themename);
         $themes[$themename] = $theme;
     }
-    asort($themes);
+
+    collatorlib::asort_objects_by_method($themes, 'get_theme_name');
 
     return $themes;
 }
@@ -7103,11 +7297,10 @@ function get_core_subsystems() {
             'publish'     => 'course/publish',
             'question'    => 'question',
             'rating'      => 'rating',
-            'register'    => 'admin/registration',
+            'register'    => 'admin/registration', //TODO: this is wrong, unfortunately we would need to modify hub code to pass around the correct url
             'repository'  => 'repository',
             'rss'         => 'rss',
             'role'        => $CFG->admin.'/role',
-            'simpletest'  => NULL,
             'search'      => 'search',
             'table'       => NULL,
             'tag'         => 'tag',
@@ -7115,7 +7308,6 @@ function get_core_subsystems() {
             'user'        => 'user',
             'userkey'     => NULL,
             'webservice'  => 'webservice',
-            'xmldb'       => NULL,
         );
     }
 
@@ -7156,7 +7348,9 @@ function get_plugin_types($fullpaths=true) {
                       'qbehaviour'    => 'question/behaviour',
                       'qformat'       => 'question/format',
                       'plagiarism'    => 'plagiarism',
-                      'theme'         => 'theme'); // this is a bit hacky, themes may be in $CFG->themedir too
+                      'tool'          => $CFG->admin.'/tool',
+                      'theme'         => 'theme',  // this is a bit hacky, themes may be in $CFG->themedir too
+        );
 
         $mods = get_plugin_list('mod');
         foreach ($mods as $mod => $moddir) {
@@ -7242,7 +7436,8 @@ function get_plugin_list($plugintype) {
             if (in_array($pluginname, $ignored)) {
                 continue;
             }
-            if ($pluginname !== clean_param($pluginname, PARAM_SAFEDIR)) {
+            $pluginname = clean_param($pluginname, PARAM_PLUGIN);
+            if (empty($pluginname)) {
                 // better ignore plugins with problematic names here
                 continue;
             }
@@ -7350,23 +7545,43 @@ function get_list_of_plugins($directory='mod', $exclude='', $basedir='') {
  *
  * @param string $type Plugin type e.g. 'mod'
  * @param string $name Plugin name
- * @param string $feature Feature code (FEATURE_xx constant)
+ * @param string $feature Feature name
  * @param string $action Feature's action
  * @param string $options parameters of callback function, should be an array
  * @param mixed $default default value if callback function hasn't been defined
  * @return mixed
  */
 function plugin_callback($type, $name, $feature, $action, $options = null, $default=null) {
-    global $CFG;
+    global $CFG; // this is needed for require_once() bellow
 
-    $name = clean_param($name, PARAM_SAFEDIR);
-    $function = $name.'_'.$feature.'_'.$action;
-    $file = get_component_directory($type . '_' . $name) . '/lib.php';
+    $component = clean_param($type . '_' . $name, PARAM_COMPONENT);
+    if (empty($component)) {
+        throw coding_exception('Invalid component used in plugin_callback():' . $type . '_' . $name);
+    }
+
+    list($type, $name) = normalize_component($component);
+    $component = $type . '_' . $name;
+
+    $function = $component.'_'.$feature.'_'.$action;
+    $oldfunction = $name.'_'.$feature.'_'.$action;
+
+    $dir = get_component_directory($component);
+    if (empty($dir)) {
+        throw coding_exception('Invalid component used in plugin_callback():' . $type . '_' . $name);
+    }
 
     // Load library and look for function
-    if (file_exists($file)) {
-        require_once($file);
+    if (file_exists($dir.'/lib.php')) {
+        require_once($dir.'/lib.php');
     }
+
+    if (!function_exists($function) and function_exists($oldfunction)) {
+        if ($type !== 'mod' and $type !== 'core') {
+            debugging("Please use new function name $function instead of legacy $oldfunction");
+        }
+        $function = $oldfunction;
+    }
+
     if (function_exists($function)) {
         // Function exists, so just return function result
         $ret = call_user_func_array($function, (array)$options);
@@ -7392,24 +7607,30 @@ function plugin_callback($type, $name, $feature, $action, $options = null, $defa
 function plugin_supports($type, $name, $feature, $default = NULL) {
     global $CFG;
 
-    $name = clean_param($name, PARAM_SAFEDIR); //bit of extra security
+    if ($type === 'mod' and $name === 'NEWMODULE') {
+        //somebody forgot to rename the module template
+        return false;
+    }
+
+    $component = clean_param($type . '_' . $name, PARAM_COMPONENT);
+    if (empty($component)) {
+        throw coding_exception('Invalid component used in plugin_supports():' . $type . '_' . $name);
+    }
 
     $function = null;
 
     if ($type === 'mod') {
         // we need this special case because we support subplugins in modules,
         // otherwise it would end up in infinite loop
-        if ($name === 'NEWMODULE') {
-            //somebody forgot to rename the module template
-            return false;
-        }
         if (file_exists("$CFG->dirroot/mod/$name/lib.php")) {
             include_once("$CFG->dirroot/mod/$name/lib.php");
-            $function = $type.'_'.$name.'_supports';
+            $function = $component.'_supports';
             if (!function_exists($function)) {
                 // legacy non-frankenstyle function name
                 $function = $name.'_supports';
             }
+        } else {
+            // invalid module
         }
 
     } else {
@@ -7419,7 +7640,7 @@ function plugin_supports($type, $name, $feature, $default = NULL) {
         }
         if (file_exists("$path/lib.php")) {
             include_once("$path/lib.php");
-            $function = $type.'_'.$name.'_supports';
+            $function = $component.'_supports';
         }
     }
 
@@ -9332,11 +9553,13 @@ function message_popup_window() {
     }
 
     //got unread messages so now do another query that joins with the user table
-    $messagesql = "SELECT m.id, m.smallmessage, m.notification, u.firstname, u.lastname FROM {message} m
-JOIN {message_working} mw ON m.id=mw.unreadmessageid
-JOIN {message_processors} p ON mw.processorid=p.id
-JOIN {user} u ON m.useridfrom=u.id
-WHERE m.useridto = :userid AND p.name='popup'";
+    $messagesql = "SELECT m.id, m.smallmessage, m.fullmessageformat, m.notification, u.firstname, u.lastname
+                     FROM {message} m
+                     JOIN {message_working} mw ON m.id=mw.unreadmessageid
+                     JOIN {message_processors} p ON mw.processorid=p.id
+                     JOIN {user} u ON m.useridfrom=u.id
+                    WHERE m.useridto = :userid
+                      AND p.name='popup'";
 
     //if the user was last notified over an hour ago we can renotify them of old messages
     //so don't worry about when the new message was sent
@@ -9365,11 +9588,19 @@ WHERE m.useridto = :userid AND p.name='popup'";
             $smallmessage = null;
             if (!empty($message_users->smallmessage)) {
                 //display the first 200 chars of the message in the popup
+                $textlib = textlib_get_instance();
                 $smallmessage = null;
-                if (strlen($message_users->smallmessage>200)) {
-                    $smallmessage = substr($message_users->smallmessage,0,200).'...';
+                if ($textlib->strlen($message_users->smallmessage) > 200) {
+                    $smallmessage = $textlib->substr($message_users->smallmessage,0,200).'...';
                 } else {
                     $smallmessage = $message_users->smallmessage;
+                }
+
+                //prevent html symbols being displayed
+                if ($message_users->fullmessageformat == FORMAT_HTML) {
+                    $smallmessage = html_to_text($smallmessage);
+                } else {
+                    $smallmessage = s($smallmessage);
                 }
             } else if ($message_users->notification) {
                 //its a notification with no smallmessage so just say they have a notification

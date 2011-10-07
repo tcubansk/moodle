@@ -35,7 +35,7 @@ class scorm_basic_report extends scorm_default_report {
         global $CFG, $DB, $OUTPUT, $PAGE;
         $contextmodule= get_context_instance(CONTEXT_MODULE, $cm->id);
         $action = optional_param('action', '', PARAM_ALPHA);
-        $attemptids = optional_param('attemptid', array(), PARAM_RAW);
+        $attemptids = optional_param_array('attemptid', array(), PARAM_RAW);
 
         if ($action == 'delete' && has_capability('mod/scorm:deleteresponses', $contextmodule) && confirm_sesskey()) {
             if (scorm_delete_responses($attemptids, $scorm)) { //delete responses.
@@ -99,7 +99,9 @@ class scorm_basic_report extends scorm_default_report {
         if ( !$nostudents ) {
             // Now check if asked download of data
             if ($download) {
-                $filename = clean_filename("$course->shortname ".format_string($scorm->name, true));
+                $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+                $shortname = format_string($course->shortname, true, array('context' => $coursecontext));
+                $filename = clean_filename("$shortname ".format_string($scorm->name, true));
             }
 
             // Define table columns
@@ -422,7 +424,7 @@ class scorm_basic_report extends scorm_default_report {
                                     if ($trackdata->score_raw != '') {
                                         $score = $trackdata->score_raw;
                                         // add max score if it exists
-                                        if ($scorm->version == 'SCORM_1.3') {
+                                        if (scorm_version_check($scorm->version, SCORM_13)) {
                                             $maxkey = 'cmi.score.max';
                                         } else {
                                             $maxkey = 'cmi.core.score.max';
@@ -512,6 +514,11 @@ class scorm_basic_report extends scorm_default_report {
                     $mform->display();
                 }
             } else {
+                if ($candelete && !$download) {
+                    echo '</div>';
+                    echo '</form>';
+                }
+                echo '</div>';
                 echo $OUTPUT->notification(get_string('noactivity', 'scorm'));
             }
             if ($download == 'Excel' or $download == 'ODS') {

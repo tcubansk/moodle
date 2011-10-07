@@ -17,7 +17,7 @@
 function scorm_get_resources($blocks) {
     $resources = array();
     foreach ($blocks as $block) {
-        if ($block['name'] == 'RESOURCES') {
+        if ($block['name'] == 'RESOURCES' && isset($block['children'])) {
             foreach ($block['children'] as $resource) {
                 if ($resource['name'] == 'RESOURCE') {
                     $resources[addslashes_js($resource['attrs']['IDENTIFIER'])] = $resource['attrs'];
@@ -29,12 +29,14 @@ function scorm_get_resources($blocks) {
 }
 
 function scorm_get_manifest($blocks, $scoes) {
+    global $OUTPUT;
     static $parents = array();
     static $resources;
 
     static $manifest;
     static $organization;
 
+    $manifestresourcesnotfound = array();
     if (count($blocks) > 0) {
         foreach ($blocks as $block) {
             switch ($block['name']) {
@@ -130,11 +132,16 @@ function scorm_get_manifest($blocks, $scoes) {
                         if (isset($resources[$idref]['XML:BASE'])) {
                             $base = $resources[$idref]['XML:BASE'];
                         }
-                        $scoes->elements[$manifest][$organization][$identifier]->launch = $base.$resources[$idref]['HREF'];
-                        if (empty($resources[$idref]['ADLCP:SCORMTYPE'])) {
-                            $resources[$idref]['ADLCP:SCORMTYPE'] = 'asset';
+                        if (!isset($resources[$idref])) {
+                            $manifestresourcesnotfound[] = $idref;
+                            $scoes->elements[$manifest][$organization][$identifier]->launch = '';
+                        } else {
+                            $scoes->elements[$manifest][$organization][$identifier]->launch = $base.$resources[$idref]['HREF'];
+                            if (empty($resources[$idref]['ADLCP:SCORMTYPE'])) {
+                                $resources[$idref]['ADLCP:SCORMTYPE'] = 'asset';
+                            }
+                            $scoes->elements[$manifest][$organization][$identifier]->scormtype = $resources[$idref]['ADLCP:SCORMTYPE'];
                         }
-                        $scoes->elements[$manifest][$organization][$identifier]->scormtype = $resources[$idref]['ADLCP:SCORMTYPE'];
                     }
 
                     $parent = new stdClass();
@@ -473,6 +480,13 @@ function scorm_get_manifest($blocks, $scoes) {
             }
         }
     }
+    if (!empty($manifestresourcesnotfound)) {
+        //throw warning to user to let them know manifest contains references to resources that don't appear to exist.
+        if (!defined('DEBUGGING_PRINTED')) { //prevent redirect and display warning
+            define('DEBUGGING_PRINTED', 1);
+        }
+        echo $OUTPUT->notification(get_string('invalidmanifestresource', 'scorm').' '. implode(', ',$manifestresourcesnotfound));
+    }
     return $scoes;
 }
 
@@ -586,7 +600,7 @@ function scorm_parse_scorm($scorm, $manifest) {
                             $obj->primaryobj = $objective->primaryobj;
                             $obj->satisfiedbumeasure = $objective->satisfiedbymeasure;
                             $obj->objectiveid = $objective->objectiveid;
-                            $obj->minnormalizedmeasure = $objective->minnormalizedmeasure;
+                            $obj->minnormalizedmeasure = trim($objective->minnormalizedmeasure);
                             $objectiveid = $DB->insert_record('scorm_seq_objective', $obj);
                             if (isset($objective->mapinfos)) {
                                 foreach ($objective->mapinfos as $objmapinfo) {

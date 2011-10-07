@@ -765,6 +765,9 @@ abstract class webservice_zend_server extends webservice_server {
         //log the web service request
         add_to_log(SITEID, 'webservice', '', '' , $this->zend_class." ".getremoteaddr() , 0, $this->userid);
 
+        //send headers
+        $this->send_headers();
+
         // execute and return response, this sends some headers too
         $response = $this->zend_server->handle();
 
@@ -772,7 +775,6 @@ abstract class webservice_zend_server extends webservice_server {
         $this->session_cleanup();
 
         //finally send the result
-        $this->send_headers();
         echo $response;
         die;
     }
@@ -924,22 +926,7 @@ class '.$classname.' {
             }
             $params[] = $param;
             $paramanddefaults[] = $paramanddefault;
-            $type = 'string';
-            if ($keydesc instanceof external_value) {
-                switch($keydesc->type) {
-                    case PARAM_BOOL: // 0 or 1 only for now
-                    case PARAM_INT:
-                        $type = 'int'; break;
-                    case PARAM_FLOAT;
-                        $type = 'double'; break;
-                    default:
-                        $type = 'string';
-                }
-            } else if ($keydesc instanceof external_single_structure) {
-                $type = 'object|struct';
-            } else if ($keydesc instanceof external_multiple_structure) {
-                $type = 'array';
-            }
+            $type = $this->get_phpdoc_type($keydesc);
             $params_desc[] = '     * @param '.$type.' $'.$name.' '.$keydesc->desc;
         }
         $params                = implode(', ', $params);
@@ -951,22 +938,7 @@ class '.$classname.' {
         if (is_null($function->returns_desc)) {
             $return = '     * @return void';
         } else {
-            $type = 'string';
-            if ($function->returns_desc instanceof external_value) {
-                switch($function->returns_desc->type) {
-                    case PARAM_BOOL: // 0 or 1 only for now
-                    case PARAM_INT:
-                        $type = 'int'; break;
-                    case PARAM_FLOAT;
-                        $type = 'double'; break;
-                    default:
-                        $type = 'string';
-                }
-            } else if ($function->returns_desc instanceof external_single_structure) {
-                $type = 'object|struct'; //only 'object' is supported by SOAP, 'struct' by XML-RPC MDL-23083
-            } else if ($function->returns_desc instanceof external_multiple_structure) {
-                $type = 'array';
-            }
+            $type = $this->get_phpdoc_type($function->returns_desc);
             $return = '     * @return '.$type.' '.$function->returns_desc->desc;
         }
 
@@ -984,6 +956,33 @@ class '.$classname.' {
     }
 ';
         return $code;
+    }
+
+    protected function get_phpdoc_type($keydesc) {
+        if ($keydesc instanceof external_value) {
+            switch($keydesc->type) {
+                case PARAM_BOOL: // 0 or 1 only for now
+                case PARAM_INT:
+                    $type = 'int'; break;
+                case PARAM_FLOAT;
+                    $type = 'double'; break;
+                default:
+                    $type = 'string';
+            }
+
+        } else if ($keydesc instanceof external_single_structure) {
+            $classname = $this->generate_simple_struct_class($keydesc);
+            $type = $classname;
+
+        } else if ($keydesc instanceof external_multiple_structure) {
+            $type = 'array';
+        }
+
+        return $type;
+    }
+
+    protected function generate_simple_struct_class(external_single_structure $structdesc) {
+        return 'object|struct'; //only 'object' is supported by SOAP, 'struct' by XML-RPC MDL-23083
     }
 
     /**
@@ -1311,7 +1310,7 @@ abstract class webservice_base_server extends webservice_server {
         }
         $rs->close();
         if (!$allowed) {
-            throw new webservice_access_exception('Access to external function not allowed');
+            throw new webservice_access_exception(get_string('accesstofunctionnotallowed', 'webservice', $this->functionname));
         }
 
         // we have all we need now

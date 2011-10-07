@@ -847,7 +847,7 @@ function get_categories($parent='none', $sort=NULL, $shallow=true) {
                   FROM {course_categories} cc
                $ccjoin
                   JOIN {course_categories} ccp
-                       ON (cc.path LIKE ".$DB->sql_concat('ccp.path',"'%'").")
+                       ON ((cc.parent = ccp.id) OR (cc.path LIKE ".$DB->sql_concat('ccp.path',"'/%'")."))
                  WHERE ccp.id=?
                 $sort";
         $params = array($parent);
@@ -1662,6 +1662,8 @@ function add_to_log($courseid, $module, $action, $url='', $info='', $cm=0, $user
     $info = $info;
     if (!empty($url)) { // could break doing html_entity_decode on an empty var.
         $url = html_entity_decode($url);
+    } else {
+        $url = '';
     }
 
     // Restrict length of log lines to the space actually available in the

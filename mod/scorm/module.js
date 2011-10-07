@@ -32,7 +32,9 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
     var scorm_hide_nav = true;
     var scorm_hide_toc = true;
     if (hide_toc == 0) {
-        scorm_hide_nav = false;
+        if (hide_nav != 1) {
+            scorm_hide_nav = false;
+        }
         scorm_hide_toc = false;
     } else if (hide_toc == 3) {
         scorm_disable_toc = true;
@@ -120,7 +122,7 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
                     var cwidth = scormplayerdata.cwidth;
                     var cheight = scormplayerdata.cheight;
                     var poptions = scormplayerdata.popupoptions;
-                    scorm_openpopup("loadSCO.php?" + node.title, window_name, poptions, cwidth, cheight);
+                    scorm_openpopup(M.cfg.wwwroot + "/mod/scorm/loadSCO.php?" + node.title, window_name, poptions, cwidth, cheight);
                 } else {
                     content.replaceChild(obj, old);
                 }
@@ -146,11 +148,11 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
          * @return void
          */
         var scorm_fixnav = function() {
-            scorm_buttons[0].set('disabled', (scorm_skipprev(scorm_current_node) == null));
-            scorm_buttons[1].set('disabled', (scorm_prev(scorm_current_node) == null));
-            scorm_buttons[2].set('disabled', (scorm_up(scorm_current_node) == null));
-            scorm_buttons[3].set('disabled', (scorm_next(scorm_current_node) == null));
-            scorm_buttons[4].set('disabled', (scorm_skipnext(scorm_current_node) == null));
+            scorm_buttons[0].set('disabled', (scorm_skipprev(scorm_current_node) == null || scorm_skipprev(scorm_current_node).title == null));
+            scorm_buttons[1].set('disabled', (scorm_prev(scorm_current_node) == null || scorm_prev(scorm_current_node).title == null));
+            scorm_buttons[2].set('disabled', (scorm_up(scorm_current_node) == null) || scorm_up(scorm_current_node).title == null);
+            scorm_buttons[3].set('disabled', (scorm_next(scorm_current_node) == null) || scorm_next(scorm_current_node).title == null);
+            scorm_buttons[4].set('disabled', (scorm_skipnext(scorm_current_node) == null || scorm_skipnext(scorm_current_node).title == null));
         };
 
         var scorm_resize_parent = function() {
@@ -183,6 +185,16 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
             }
 
             scorm_layout_widget.setStyle('height', '100%');
+            var center = scorm_layout_widget.getUnitByPosition('center');
+            center.setStyle('height', '100%');
+
+            // calculate the rough new height
+            newheight = YAHOO.util.Dom.getViewportHeight() *.82;
+            if (newheight < 600) {
+                newheight = 600;
+            }
+            scorm_layout_widget.set('height', newheight);
+
             scorm_layout_widget.render();
             scorm_resize_frame();
 

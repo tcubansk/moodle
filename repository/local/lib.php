@@ -52,8 +52,8 @@ class repository_local extends repository {
         if (!empty($encodedpath)) {
             $params = unserialize(base64_decode($encodedpath));
             if (is_array($params)) {
-                $component = is_null($params['component']) ? NULL : clean_param($params['component'], PARAM_ALPHAEXT);
-                $filearea  = is_null($params['filearea']) ? NULL : clean_param($params['filearea'], PARAM_ALPHAEXT);
+                $component = is_null($params['component']) ? NULL : clean_param($params['component'], PARAM_COMPONENT);
+                $filearea  = is_null($params['filearea']) ? NULL : clean_param($params['filearea'], PARAM_AREA);
                 $itemid    = is_null($params['itemid']) ? NULL : clean_param($params['itemid'], PARAM_INT);
                 $filepath  = is_null($params['filepath']) ? NULL : clean_param($params['filepath'], PARAM_PATH);;
                 $filename  = is_null($params['filename']) ? NULL : clean_param($params['filename'], PARAM_FILE);
@@ -99,10 +99,6 @@ class repository_local extends repository {
                         continue;
                     }
                     $params = $child->get_params();
-                    $subdir_children = $child->get_children();
-                    //if (empty($subdir_children)) {
-                        //continue;
-                    //}
                     $encodedpath = base64_encode(serialize($params));
                     // hide user_private area from local plugin, user should
                     // use private file plugin to access private files

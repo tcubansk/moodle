@@ -30,11 +30,23 @@ if (!file_exists('../config.php')) {
 }
 
 // Check that PHP is of a sufficient version as soon as possible
-if (version_compare(phpversion(), '5.2.0') < 0) {
+if (version_compare(phpversion(), '5.3.2') < 0) {
     $phpversion = phpversion();
     // do NOT localise - lang strings would not work here and we CAN NOT move it to later place
-    echo "Sorry, Moodle 2.0 requires PHP 5.2.8 or later (currently using version $phpversion). ";
-    echo "Please upgrade your server software or use latest Moodle 1.9.x instead.";
+    echo "Moodle 2.1 or later requires at least PHP 5.3.2 (currently using version $phpversion).<br />";
+    echo "Please upgrade your server software or install older Moodle version.";
+    die;
+}
+
+// make sure iconv is available and actually works
+if (!function_exists('iconv')) {
+    // this should not happen, this must be very borked install
+    echo 'Moodle requires the iconv PHP extension. Please install or enable the iconv extension.';
+    die();
+}
+if (iconv('UTF-8', 'UTF-8//IGNORE', 'abc') !== 'abc') {
+    // known to be broken in mid-2011 MAMP installations
+    echo 'Broken iconv PHP extension detected, installation/upgrade can not continue.';
     die;
 }
 
@@ -121,7 +133,7 @@ if (!core_tables_exist()) {
         echo $OUTPUT->box($copyrightnotice, 'copyrightnotice');
         echo '<br />';
         $continue = new single_button(new moodle_url('/admin/index.php', array('lang'=>$CFG->lang, 'agreelicense'=>1)), get_string('continue'), 'get');
-        echo $OUTPUT->confirm(get_string('doyouagree'), $continue, "http://docs.moodle.org/en/License");
+        echo $OUTPUT->confirm(get_string('doyouagree'), $continue, "http://docs.moodle.org/dev/License");
         echo $OUTPUT->footer();
         die;
     }
@@ -237,7 +249,7 @@ if ($version > $CFG->version) {  // upgrade
             print_upgrade_reload('index.php?confirmupgrade=1');
         } else {
             echo $OUTPUT->notification(get_string('environmentok', 'admin'), 'notifysuccess');
-            if (empty($CFG->skiplangupgrade)) {
+            if (empty($CFG->skiplangupgrade) and current_language() !== 'en') {
                 echo $OUTPUT->box_start('generalbox', 'notice');
                 print_string('langpackwillbeupdated', 'admin');
                 echo $OUTPUT->box_end();
@@ -433,12 +445,6 @@ if (time() - $lastcron > 3600 * 24) {
     echo $OUTPUT->box(get_string('cronwarning', 'admin').'&nbsp;'.$helpbutton, 'generalbox adminwarning');
 }
 
-// Hidden bloglevel upgrade
-$showbloglevelupgrade = ($CFG->bloglevel == BLOG_COURSE_LEVEL || $CFG->bloglevel == BLOG_GROUP_LEVEL) && empty($CFG->bloglevel_upgrade_complete);
-if ($showbloglevelupgrade) {
-    echo $OUTPUT->box(get_string('bloglevelupgradenotice', 'admin'), 'generalbox adminwarning');
-}
-
 // diagnose DB, especially the sloppy MyISAM tables
 $diagnose = $DB->diagnose();
 if ($diagnose !== NULL) {
@@ -455,8 +461,8 @@ if (!empty($CFG->maintenance_enabled)) {
 $copyrighttext = '<a href="http://moodle.org/">Moodle</a> '.
                  '<a href="http://docs.moodle.org/dev/Releases" title="'.$CFG->version.'">'.$CFG->release.'</a><br />'.
                  'Copyright &copy; 1999 onwards, Martin Dougiamas<br />'.
-                 'and <a href="http://docs.moodle.org/en/Credits">many other contributors</a>.<br />'.
-                 '<a href="http://docs.moodle.org/en/License">GNU Public License</a>';
+                 'and <a href="http://docs.moodle.org/dev/Credits">many other contributors</a>.<br />'.
+                 '<a href="http://docs.moodle.org/dev/License">GNU Public License</a>';
 echo $OUTPUT->box($copyrighttext, 'copyright');
 //////////////////////////////////////////////////////////////////////////////////////////////////
 

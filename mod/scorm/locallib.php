@@ -678,6 +678,10 @@ function scorm_course_format_display($user, $course) {
         if (! $cm = get_coursemodule_from_instance('scorm', $scorm->id, $course->id)) {
             print_error('invalidcoursemodule');
         }
+        $contextmodule = get_context_instance(CONTEXT_MODULE, $cm->id);
+        if ((has_capability('mod/scorm:skipview', $contextmodule))) {
+            scorm_simple_play($scorm, $user, $contextmodule, $cm->id);
+        }
         $colspan = '';
         $headertext = '<table width="100%"><tr><td class="title">'.get_string('name').': <b>'.format_string($scorm->name).'</b>';
         if (has_capability('moodle/course:manageactivities', $context)) {
@@ -807,7 +811,7 @@ function scorm_view_display ($user, $scorm, $action, $cm) {
     }
 }
 
-function scorm_simple_play($scorm, $user, $context) {
+function scorm_simple_play($scorm, $user, $context, $cmid) {
     global $DB;
 
     $result = false;
@@ -832,12 +836,17 @@ function scorm_simple_play($scorm, $user, $context) {
         }
         if ($scorm->skipview >= 1) {
             $sco = current($scoes);
-            if (scorm_get_tracks($sco->id, $user->id) === false) {
-                header('Location: player.php?a='.$scorm->id.'&scoid='.$sco->id.'&currentorg='.$orgidentifier);
-                $result = true;
-            } else if ($scorm->skipview == 2) {
-                header('Location: player.php?a='.$scorm->id.'&scoid='.$sco->id.'&currentorg='.$orgidentifier);
-                $result = true;
+            $url = new moodle_url('/mod/scorm/player.php', array('a' => $scorm->id,
+                                                                'currentorg'=>$orgidentifier,
+                                                                'scoid'=>$sco->id));
+            if ($scorm->skipview == 2 || scorm_get_tracks($sco->id, $user->id) === false) {
+                if (!empty($scorm->forcenewattempt)) {
+                    $result = scorm_get_toc($user, $scorm, $cmid, TOCFULLURL, $orgidentifier);
+                    if ($result->incomplete === false) {
+                        $url->param('newattempt','on');
+                    }
+                }
+                redirect($url);
             }
         }
     }
@@ -883,7 +892,7 @@ function scorm_reconstitute_array_element($sversion, $userdata, $element_name, $
     $count = 0;
     $count_sub = 0;
     $scormseperator = '_';
-    if ($sversion == 'scorm_13') { //scorm 1.3 elements use a . instead of an _
+    if (scorm_version_check($sversion, SCORM_13)) { //scorm 1.3 elements use a . instead of an _
         $scormseperator = '.';
     }
     // filter out the ones we want
@@ -899,7 +908,7 @@ function scorm_reconstitute_array_element($sversion, $userdata, $element_name, $
 
     // generate JavaScript
     foreach ($element_list as $element => $value) {
-        if ($sversion == 'scorm_13') {
+        if (scorm_version_check($sversion, SCORM_13)) {
             $element = preg_replace('/\.(\d+)\./', ".N\$1.", $element);
             preg_match('/\.(N\d+)\./', $element, $matches);
         } else {
@@ -926,7 +935,7 @@ function scorm_reconstitute_array_element($sversion, $userdata, $element_name, $
         }
 
         // now - flesh out the second level elements if there are any
-        if ($sversion == 'scorm_13') {
+        if (scorm_version_check($sversion, SCORM_13)) {
             $element = preg_replace('/(.*?\.N\d+\..*?)\.(\d+)\./', "\$1.N\$2.", $element);
             preg_match('/.*?\.N\d+\.(.*?)\.(N\d+)\./', $element, $matches);
         } else {
@@ -1110,7 +1119,7 @@ function scorm_get_attempt_count($userid, $scorm, $attempts_only=false) {
     if ($scorm->grademethod == GRADESCOES) {
         $element = 'cmi.core.lesson_status';
     }
-    if ($scorm->version == 'scorm_13' || $scorm->version == 'SCORM_1.3') {
+    if (scorm_version_check($scorm->version, SCORM_13)) {
         $element = 'cmi.score.raw';
     }
     $attempts = $DB->get_records_select('scorm_scoes_track', "element=? AND userid=? AND scormid=?", array($element, $userid, $scorm->id), 'attempt', 'DISTINCT attempt AS attemptnumber');
@@ -1285,9 +1294,6 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
         $usertracks = array();
         foreach ($scoes as $sco) {
             if (!empty($sco->launch)) {
-                if (empty($scoid)) {
-                    $scoid = $sco->id;
-                }
                 if ($usertrack = scorm_get_tracks($sco->id,$user->id,$attempt)) {
                     if ($usertrack->status == '') {
                         $usertrack->status = 'notattempted';
@@ -1303,6 +1309,7 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
         $nextid = 0;
         $findnext = false;
         $parents[$level]='/';
+        $prevsco = '';
         foreach ($scoes as $pos => $sco) {
             $isvisible = false;
             $sco->title = $sco->title;
@@ -1381,7 +1388,7 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
                         }
                         $strsuspended = get_string('suspended','scorm');
                         $exitvar = 'cmi.core.exit';
-                        if ($scorm->version == 'SCORM_1.3') {
+                        if (scorm_version_check($scorm->version, SCORM_13)) {
                             $exitvar = 'cmi.exit';
                         }
                         if ($incomplete && isset($usertrack->{$exitvar}) && ($usertrack->{$exitvar} == 'suspend')) {
@@ -1407,8 +1414,7 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
                             $previd = $sco->id;
                         }
                     }
-
-                    if ($scorm->version == 'SCORM_1.3') {
+                    if (scorm_version_check($scorm->version, SCORM_13)) {
                         require_once($CFG->dirroot.'/mod/scorm/datamodels/sequencinglib.php');
                         $prereq = scorm_seq_evaluate($sco->id,$usertracks);
                     } else {
@@ -1419,8 +1425,9 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
                         if ($sco->id == $scoid) {
                             $result->prerequisites = true;
                         }
-
-                        if ($toclink == TOCFULLURL) { //display toc with urls for structure page
+                        if (!empty($prevsco) && scorm_version_check($scorm->version, SCORM_13) && !empty($prevsco->hidecontinue)) {
+                            $result->toc .= '<span>'.$statusicon.'&nbsp;'.format_string($sco->title).'</span>';
+                        } else if ($toclink == TOCFULLURL) { //display toc with urls for structure page
                             $url = $CFG->wwwroot.'/mod/scorm/player.php?a='.$scorm->id.'&amp;currentorg='.$currentorg.$modestr.'&amp;scoid='.$sco->id;
                             $result->toc .= $statusicon.'&nbsp;<a href="'.$url.'">'.format_string($sco->title).'</a>'.$score."\n";
                         } else { //display toc for inside scorm player
@@ -1455,16 +1462,17 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
                     $nextid = $nextsco->id;
                 }
             }
+            $prevsco = $sco;
         }
         for ($i=0;$i<$level;$i++) {
             $result->toc .= "\t\t</ul></li>\n";
         }
 
         if ($play) {
-            if (empty($scoid)) {
-                $scoid = reset($scoes)->id;
+            // it is possible that $scoid is still not set, in this case we don't want an empty object
+            if ($scoid) {
+                $sco = scorm_get_sco($scoid);
             }
-            $sco = scorm_get_sco($scoid);
             $sco->previd = $previd;
             $sco->nextid = $nextid;
             $result->sco = $sco;

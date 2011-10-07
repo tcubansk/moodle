@@ -43,6 +43,7 @@ defined('MOODLE_INTERNAL') || die();
 require_once 'HTML/QuickForm.php';
 require_once 'HTML/QuickForm/DHTMLRulesTableless.php';
 require_once 'HTML/QuickForm/Renderer/Tableless.php';
+require_once 'HTML/QuickForm/Rule.php';
 
 require_once $CFG->libdir.'/filelib.php';
 
@@ -339,6 +340,43 @@ abstract class moodleform {
     }
 
     /**
+     * Internal method. Validates filepicker and filemanager files if they are
+     * set as required fields. Also, sets the error message if encountered one.
+     *
+     * @return bool/array with errors
+     */
+    protected function validate_draft_files() {
+        global $USER;
+        $mform =& $this->_form;
+
+        $errors = array();
+        //Go through all the required elements and make sure you hit filepicker or
+        //filemanager element.
+        foreach ($mform->_rules as $elementname => $rules) {
+            $elementtype = $mform->getElementType($elementname);
+            //If element is of type filepicker then do validation
+            if (($elementtype == 'filepicker') || ($elementtype == 'filemanager')){
+                //Check if rule defined is required rule
+                foreach ($rules as $rule) {
+                    if ($rule['type'] == 'required') {
+                        $draftid = (int)$mform->getSubmitValue($elementname);
+                        $fs = get_file_storage();
+                        $context = get_context_instance(CONTEXT_USER, $USER->id);
+                        if (!$files = $fs->get_area_files($context->id, 'user', 'draft', $draftid, 'id DESC', false)) {
+                            $errors[$elementname] = $rule['message'];
+                        }
+                    }
+                }
+            }
+        }
+        if (empty($errors)) {
+            return true;
+        } else {
+            return $errors;
+        }
+    }
+
+    /**
      * Load in existing data as form defaults. Usually new entry defaults are stored directly in
      * form definition (new entry form); this function is used to load in data where values
      * already exist and data is being edited (edit entry form).
@@ -438,6 +476,16 @@ abstract class moodleform {
 
             $files = array();
             $file_val = $this->_validate_files($files);
+            //check draft files for validation and flag them if required files
+            //are not in draft area.
+            $draftfilevalue = $this->validate_draft_files();
+
+            if ($file_val !== true && $draftfilevalue !== true) {
+                $file_val = array_merge($file_val, $draftfilevalue);
+            } else if ($draftfilevalue !== true) {
+                $file_val = $draftfilevalue;
+            } //default is file_val, so no need to assign.
+
             if ($file_val !== true) {
                 if (!empty($file_val)) {
                     foreach ($file_val as $element=>$msg) {
@@ -651,7 +699,7 @@ abstract class moodleform {
         if (!$this->get_new_filename($elname)) {
             return false;
         }
-        if (!$dir = make_upload_directory('temp/forms')) {
+        if (!$dir = make_temp_directory('forms')) {
             return false;
         }
         if (!$tempfile = tempnam($dir, 'tempup_')) {
@@ -992,15 +1040,6 @@ abstract class moodleform {
         $mform->setType("checkbox_controller$groupid", PARAM_INT);
         $mform->setConstants(array("checkbox_controller$groupid" => $new_select_value));
 
-        // Locate all checkboxes for this group and set their value, IF the optional param was given
-        if (!is_null($select_value)) {
-            foreach ($this->_form->_elements as $element) {
-                if ($element->getAttribute('class') == "checkboxgroup$groupid") {
-                    $mform->setConstants(array($element->getAttribute('name') => $select_value));
-                }
-            }
-        }
-
         $checkbox_controller_name = 'nosubmit_checkbox_controller' . $groupid;
         $mform->registerNoSubmitButton($checkbox_controller_name);
 
@@ -1009,7 +1048,7 @@ abstract class moodleform {
         if (!defined('HTML_QUICKFORM_CHECKBOXCONTROLLER_EXISTS')) {
             $js .= <<<EOS
 function html_quickform_toggle_checkboxes(group) {
-    var checkboxes = getElementsByClassName(document, 'input', 'checkboxgroup' + group);
+    var checkboxes = document.getElementsByClassName('checkboxgroup' + group);
     var newvalue = false;
     var global = eval('html_quickform_checkboxgroup' + group + ';');
     if (global == 1) {
@@ -1392,9 +1431,14 @@ class MoodleQuickForm extends HTML_QuickForm_DHTMLRulesTableless {
         } else {
             foreach ($submission as $key=>$s) {
                 if (array_key_exists($key, $this->_types)) {
-                    $submission[$key] = clean_param($s, $this->_types[$key]);
+                    $type = $this->_types[$key];
                 } else {
-                    $submission[$key] = clean_param($s, PARAM_RAW);
+                    $type = PARAM_RAW;
+                }
+                if (is_array($s)) {
+                    $submission[$key] = clean_param_array($s, $type, true);
+                } else {
+                    $submission[$key] = clean_param($s, $type);
                 }
             }
             $this->_submitValues = $submission;
@@ -1575,6 +1619,10 @@ class MoodleQuickForm extends HTML_QuickForm_DHTMLRulesTableless {
             }
         }
 
+        if (is_array($this->_constantValues)) {
+            $unfiltered = HTML_QuickForm::arrayMerge($unfiltered, $this->_constantValues);
+        }
+
         return $unfiltered;
     }
     /**
@@ -1709,8 +1757,16 @@ class MoodleQuickForm extends HTML_QuickForm_DHTMLRulesTableless {
                             }
                         }
                     }
+                    //for editor element, [text] is appended to the name.
+                    if ($element->getType() == 'editor') {
+                        $elementName .= '[text]';
+                        //Add format to rule as moodleform check which format is supported by browser
+                        //it is not set anywhere... So small hack to make sure we pass it down to quickform
+                        if (is_null($rule['format'])) {
+                            $rule['format'] = $element->getFormat();
+                        }
+                    }
                     // Fix for bug displaying errors for elements in a group
-                    //$test[$elementName][] = $registry->getValidationScript($element, $elementName, $rule);
                     $test[$elementName][0][] = $registry->getValidationScript($element, $elementName, $rule);
                     $test[$elementName][1]=$element;
                     //end of fix
@@ -1730,6 +1786,12 @@ var skipClientValidation = false;
 
 function qf_errorHandler(element, _qfMsg) {
   div = element.parentNode;
+
+  if ((div == undefined) || (element.name == undefined)) {
+    //no checking can be done for undefined elements so let server handle it.
+    return true;
+  }
+
   if (_qfMsg != \'\') {
     var errorSpan = document.getElementById(\'id_error_\'+element.name);
     if (!errorSpan) {
@@ -1779,16 +1841,25 @@ function qf_errorHandler(element, _qfMsg) {
                 $elementName);
             $js .= '
 function validate_' . $this->_formName . '_' . $escapedElementName . '(element) {
+  if (undefined == element) {
+     //required element was not found, then let form be submitted without client side validation
+     return true;
+  }
   var value = \'\';
   var errFlag = new Array();
   var _qfGroups = {};
   var _qfMsg = \'\';
   var frm = element.parentNode;
-  while (frm && frm.nodeName.toUpperCase() != "FORM") {
-    frm = frm.parentNode;
+  if ((undefined != element.name) && (frm != undefined)) {
+      while (frm && frm.nodeName.toUpperCase() != "FORM") {
+        frm = frm.parentNode;
+      }
+    ' . join("\n", $jsArr) . '
+      return qf_errorHandler(element, _qfMsg);
+  } else {
+    //element name should be defined else error msg will not be displayed.
+    return true;
   }
-' . join("\n", $jsArr) . '
-  return qf_errorHandler(element, _qfMsg);
 }
 ';
             $validateJS .= '
@@ -2276,7 +2347,7 @@ class MoodleQuickForm_Renderer extends HTML_QuickForm_Renderer_Tableless{
         if (!$form->isFrozen()) {
             $args = $form->getLockOptionObject();
             if (count($args[1]) > 0) {
-                $PAGE->requires->js_init_call('M.form.initFormDependencies', $args, false, moodleform::get_js_module());
+                $PAGE->requires->js_init_call('M.form.initFormDependencies', $args, true, moodleform::get_js_module());
             }
         }
     }
@@ -2345,6 +2416,58 @@ class MoodleQuickForm_Renderer extends HTML_QuickForm_Renderer_Tableless{
 }
 
 /**
+ * Required elements validation
+ * This class overrides QuickForm validation since it allowed space or empty tag as a value
+ */
+class MoodleQuickForm_Rule_Required extends HTML_QuickForm_Rule {
+    /**
+     * Checks if an element is not empty.
+     * This is a server-side validation, it works for both text fields and editor fields
+     *
+     * @param     string    $value      Value to check
+     * @param     mixed     $options    Not used yet
+     * @return    boolean   true if value is not empty
+     */
+    function validate($value, $options = null) {
+        global $CFG;
+        if (is_array($value) && array_key_exists('text', $value)) {
+            $value = $value['text'];
+        }
+        $stripvalues = array(
+            '#</?(?!img|canvas|hr).*?>#im', // all tags except img, canvas and hr
+            '#(\xc2|\xa0|\s|&nbsp;)#', //any whitespaces actually
+        );
+        if (!empty($CFG->strictformsrequired)) {
+            $value = preg_replace($stripvalues, '', (string)$value);
+        }
+        if ((string)$value == '') {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * This function returns Javascript code used to build client-side validation.
+     * It checks if an element is not empty.
+     *
+     * @param int $format
+     * @return array
+     */
+    function getValidationScript($format = null) {
+        global $CFG;
+        if (!empty($CFG->strictformsrequired)) {
+            if (!empty($format) && $format == FORMAT_HTML) {
+                return array('', "{jsVar}.replace(/(<[^img|hr|canvas]+>)|&nbsp;|\s+/ig, '') == ''");
+            } else {
+                return array('', "{jsVar}.replace(/^\s+$/g, '') == ''");
+            }
+        } else {
+            return array('', "{jsVar} == ''");
+        }
+    }
+}
+
+/**
  * @global object $GLOBALS['_HTML_QuickForm_default_renderer']
  * @name $_HTML_QuickForm_default_renderer
  */
@@ -2387,3 +2510,5 @@ MoodleQuickForm::registerElementType('text', "$CFG->libdir/form/text.php", 'Mood
 MoodleQuickForm::registerElementType('textarea', "$CFG->libdir/form/textarea.php", 'MoodleQuickForm_textarea');
 MoodleQuickForm::registerElementType('url', "$CFG->libdir/form/url.php", 'MoodleQuickForm_url');
 MoodleQuickForm::registerElementType('warning', "$CFG->libdir/form/warning.php", 'MoodleQuickForm_warning');
+
+MoodleQuickForm::registerRule('required', null, 'MoodleQuickForm_Rule_Required', "$CFG->libdir/formslib.php");

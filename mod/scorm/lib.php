@@ -34,6 +34,11 @@ define('SCORM_TOC_HIDDEN', 1);
 define('SCORM_TOC_POPUP', 2);
 define('SCORM_TOC_DISABLED', 3);
 
+//used to check what SCORM version is being used.
+define('SCORM_12', 1);
+define('SCORM_13', 2);
+define('SCORM_AICC', 3);
+
 /**
  * Given an object containing all the necessary data,
  * (defined by the form in mod_form.php) this function
@@ -935,6 +940,7 @@ function scorm_supports($feature) {
         case FEATURE_GRADE_HAS_GRADE:         return true;
         case FEATURE_GRADE_OUTCOMES:          return true;
         case FEATURE_BACKUP_MOODLE2:          return true;
+        case FEATURE_SHOW_DESCRIPTION:        return true;
 
         default: return null;
     }
@@ -970,7 +976,7 @@ function scorm_extend_navigation($navigation, $course, $module, $cm) {
 function scorm_debug_log_filename($type, $scoid) {
     global $CFG, $USER;
 
-    $logpath = $CFG->dataroot.'/temp/scormlogs';
+    $logpath = $CFG->tempdir.'/scormlogs';
     $logfile = $logpath.'/'.$type.'debug_'.$USER->id.'_'.$scoid.'.log';
     return $logfile;
 }
@@ -988,7 +994,7 @@ function scorm_debug_log_write($type, $text, $scoid) {
     if (!$debugenablelog || empty($text)) {
         return;
     }
-    if (make_upload_directory('temp/scormlogs/')) {
+    if (make_temp_directory('scormlogs/')) {
         $logfile = scorm_debug_log_filename($type, $scoid);
         @file_put_contents($logfile, date('Y/m/d H:i:s O')." DEBUG $text\r\n", FILE_APPEND);
     }
@@ -1083,4 +1089,39 @@ function scorm_print_overview($courses, &$htmlarray) {
 function scorm_page_type_list($pagetype, $parentcontext, $currentcontext) {
     $module_pagetype = array('mod-scorm-*'=>get_string('page-mod-scorm-x', 'scorm'));
     return $module_pagetype;
+}
+
+/**
+ * Returns the SCORM version used.
+ * @param string $scormversion comes from $scorm->version
+ * @param string $version one of the defined vars SCORM_12, SCORM_13, SCORM_AICC (or empty)
+ * @return Scorm version.
+ */
+function scorm_version_check($scormversion, $version='') {
+    $scormversion = trim(strtolower($scormversion));
+    if (empty($version) || $version==SCORM_12) {
+        if ($scormversion == 'scorm_12' || $scormversion == 'scorm_1.2') {
+            return SCORM_12;
+        }
+        if (!empty($version)) {
+            return false;
+        }
+    }
+    if (empty($version) || $version == SCORM_13) {
+        if ($scormversion == 'scorm_13' || $scormversion == 'scorm_1.3') {
+            return SCORM_13;
+        }
+        if (!empty($version)) {
+            return false;
+        }
+    }
+    if (empty($version) || $version == SCORM_AICC) {
+        if (strpos($scormversion, 'aicc')) {
+            return SCORM_AICC;
+        }
+        if (!empty($version)) {
+            return false;
+        }
+    }
+    return false;
 }

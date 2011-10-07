@@ -1291,6 +1291,28 @@ class restore_ras_and_caps_structure_step extends restore_structure_step {
  */
 class restore_enrolments_structure_step extends restore_structure_step {
 
+    /**
+     * Conditionally decide if this step should be executed.
+     *
+     * This function checks the following parameter:
+     *
+     *   1. the course/enrolments.xml file exists
+     *
+     * @return bool true is safe to execute, false otherwise
+     */
+    protected function execute_condition() {
+
+        // Check it is included in the backup
+        $fullpath = $this->task->get_taskbasepath();
+        $fullpath = rtrim($fullpath, '/') . '/' . $this->filename;
+        if (!file_exists($fullpath)) {
+            // Not found, can't restore enrolments info
+            return false;
+        }
+
+        return true;
+    }
+
     protected function define_structure() {
 
         $paths = array();
@@ -1749,7 +1771,7 @@ class restore_course_logs_structure_step extends restore_structure_step {
     /**
      * Conditionally decide if this step should be executed.
      *
-     * This function checks the following four parameters:
+     * This function checks the following parameter:
      *
      *   1. the course/logs.xml file exists
      *
@@ -2164,6 +2186,12 @@ class restore_module_structure_step extends restore_structure_step {
             $data->availablefrom = $this->apply_date_offset($data->availablefrom);
             $data->availableuntil= $this->apply_date_offset($data->availableuntil);
         }
+        // Backups that did not include showdescription, set it to default 0
+        // (this is not totally necessary as it has a db default, but just to
+        // be explicit).
+        if (!isset($data->showdescription)) {
+            $data->showdescription = 0;
+        }
         $data->instance = 0; // Set to 0 for now, going to create it soon (next step)
 
         // course_module record ready, insert it
@@ -2371,11 +2399,13 @@ class restore_create_categories_and_questions extends restore_structure_step {
 
         $category = new restore_path_element('question_category', '/question_categories/question_category');
         $question = new restore_path_element('question', '/question_categories/question_category/questions/question');
+        $hint = new restore_path_element('question_hint',
+                '/question_categories/question_category/questions/question/question_hints/question_hint');
 
         // Apply for 'qtype' plugins optional paths at question level
         $this->add_plugin_structure('qtype', $question);
 
-        return array($category, $question);
+        return array($category, $question, $hint);
     }
 
     protected function process_question_category($data) {
@@ -2484,11 +2514,11 @@ class restore_create_categories_and_questions extends restore_structure_step {
             // Adjust some columns
             $data->questionid = $newquestionid;
             // Insert record
-            $newitemid = $DB->insert_record('question_answers', $data);
+            $newitemid = $DB->insert_record('question_hints', $data);
 
-        // The question existed, we need to map the existing question_answers
+        // The question existed, we need to map the existing question_hints
         } else {
-            // Look in question_answers by answertext matching
+            // Look in question_hints by hint text matching
             $sql = 'SELECT id
                       FROM {question_hints}
                      WHERE questionid = ?
@@ -2496,7 +2526,7 @@ class restore_create_categories_and_questions extends restore_structure_step {
             $params = array($newquestionid, $data->hint);
             $newitemid = $DB->get_field_sql($sql, $params);
             // If we haven't found the newitemid, something has gone really wrong, question in DB
-            // is missing answers, exception
+            // is missing hints, exception
             if (!$newitemid) {
                 $info = new stdClass();
                 $info->filequestionid = $oldquestionid;
@@ -2505,7 +2535,7 @@ class restore_create_categories_and_questions extends restore_structure_step {
                 throw new restore_step_exception('error_question_hint_missing_in_db', $info);
             }
         }
-        // Create mapping (we'll use this intensively when restoring question_states. And also answerfeedback files)
+        // Create mapping (I'm not sure if this is really needed?)
         $this->set_mapping('question_hint', $oldid, $newitemid);
     }
 
@@ -2635,6 +2665,12 @@ class restore_create_question_files extends restore_execution_step {
                                               $oldctxid, $this->task->get_userid(), 'question_answer', null, $newctxid, true);
             restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'hint',
                                               $oldctxid, $this->task->get_userid(), 'question_hint', null, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'correctfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'partiallycorrectfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
+            restore_dbops::send_files_to_pool($this->get_basepath(), $this->get_restoreid(), 'question', 'incorrectfeedback',
+                                              $oldctxid, $this->task->get_userid(), 'question_created', $question->itemid, $newctxid, true);
             // Add qtype dependent files
             $components = backup_qtype_plugin::get_components_and_fileareas($question->qtype);
             foreach ($components as $component => $fileareas) {

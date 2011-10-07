@@ -67,12 +67,13 @@ if (isset($SESSION->scorm_scoid)) {
 $strscorms = get_string("modulenameplural", "scorm");
 $strscorm  = get_string("modulename", "scorm");
 
-$pagetitle = strip_tags($course->shortname.': '.format_string($scorm->name));
+$shortname = format_string($course->shortname, true, array('context' => $context));
+$pagetitle = strip_tags($shortname.': '.format_string($scorm->name));
 
 add_to_log($course->id, 'scorm', 'pre-view', 'view.php?id='.$cm->id, "$scorm->id", $cm->id);
 
-if ((has_capability('mod/scorm:skipview', $contextmodule)) && scorm_simple_play($scorm, $USER, $contextmodule)) {
-    exit;
+if ((has_capability('mod/scorm:skipview', $contextmodule))) {
+    scorm_simple_play($scorm, $USER, $contextmodule, $cm->id);
 }
 
 //
