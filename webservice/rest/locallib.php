@@ -125,9 +125,9 @@ class webservice_rest_server extends webservice_base_server {
         } else {
             $xml = '<?xml version="1.0" encoding="UTF-8" ?>'."\n";
             $xml .= '<EXCEPTION class="'.get_class($ex).'">'."\n";
-            $xml .= '<MESSAGE>'.htmlentities($ex->getMessage(), ENT_COMPAT, 'UTF-8').'</MESSAGE>'."\n";
+            $xml .= '<MESSAGE>'.htmlspecialchars($ex->getMessage(), ENT_COMPAT, 'UTF-8').'</MESSAGE>'."\n";
             if (debugging() and isset($ex->debuginfo)) {
-                $xml .= '<DEBUGINFO>'.htmlentities($ex->debuginfo, ENT_COMPAT, 'UTF-8').'</DEBUGINFO>'."\n";
+                $xml .= '<DEBUGINFO>'.htmlspecialchars($ex->debuginfo, ENT_COMPAT, 'UTF-8').'</DEBUGINFO>'."\n";
             }
             $xml .= '</EXCEPTION>'."\n";
             echo $xml;
@@ -169,7 +169,7 @@ class webservice_rest_server extends webservice_base_server {
             if (is_null($returns)) {
                 return '<VALUE null="null"/>'."\n";
             } else {
-                return '<VALUE>'.htmlentities($returns, ENT_COMPAT, 'UTF-8').'</VALUE>'."\n";
+                return '<VALUE>'.htmlspecialchars($returns, ENT_COMPAT, 'UTF-8').'</VALUE>'."\n";
             }
 
         } else if ($desc instanceof external_multiple_structure) {
