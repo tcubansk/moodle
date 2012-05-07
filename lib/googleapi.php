@@ -44,6 +44,7 @@ require_once($CFG->libdir.'/filelib.php');
  */
 abstract class google_auth_request extends curl {
     protected $token = '';
+    private $googleapikey = '';
     private $persistantheaders = array();
 
     // Must be overridden with the authorization header name
@@ -51,10 +52,15 @@ abstract class google_auth_request extends curl {
         throw new coding_exception('get_auth_header_name() method needs to be overridden in each subclass of google_auth_request');
     }
 
+    // Must be overridden with the authorization header name
+    public function get_auth_header() {
+        throw new coding_exception('get_auth_header_name() method needs to be overridden in each subclass of google_auth_request');
+    }
+
     protected function request($url, $options = array()){
         if($this->token){
             // Adds authorisation head to a request so that it can be authentcated
-            $this->setHeader('Authorization: '. $this->get_auth_header_name().'"'.$this->token.'"');
+            $this->setHeader($this->get_auth_header($url));
         }
 
         foreach($this->persistantheaders as $h){
@@ -70,7 +76,7 @@ abstract class google_auth_request extends curl {
     protected function multi($requests, $options = array()) {
         if($this->token){
             // Adds authorisation head to a request so that it can be authentcated
-            $this->setHeader('Authorization: '. $this->get_auth_header_name().'"'.$this->token.'"');
+            $this->setHeader($this->get_auth_header($requests[0]['url']));
         }
 
         foreach($this->persistantheaders as $h){
@@ -115,9 +121,10 @@ class google_authsub_request extends google_auth_request {
      *
      * @param string $authtoken The token to upgrade to a session token
      */
-    public function __construct($authtoken){
+    public function __construct($authtoken, $googleapikey = ''){
         parent::__construct();
         $this->token = $authtoken;
+        $this->googleapikey = $googleapikey;
     }
 
     /**
@@ -138,6 +145,25 @@ class google_authsub_request extends google_auth_request {
     public static function get_auth_header_name(){
         return 'AuthSub token=';
     }
+
+    public function get_auth_header($url = '') {
+        if (!$this->googleapikey) {
+            return "Authorization: AuthSub token=\"$this->token\"";
+        } else {
+            // We are using secure tokens. Authorization is a little more involved.
+            $timestamp = time();
+            $nonce = md5(microtime() . mt_rand());
+            $data = "GET $url $timestamp $nonce";
+
+            $privatekeyid = openssl_get_privatekey($this->googleapikey);
+            openssl_sign($data, $signature, $privatekeyid, OPENSSL_ALGO_SHA1);
+            openssl_free_key($privatekeyid);
+
+            $sigalg = 'rsa-sha1';
+            $sig = base64_encode($signature);
+            return "Authorization: AuthSub token=\"$this->token\" data=\"$data\" sig=\"$sig\" sigalg=\"$sigalg\"";
+       }
+   }
 }
 
 /**
@@ -162,11 +188,12 @@ class google_authsub extends google_auth_request {
      * @param string $authtoken A one-time auth token wich is used to upgrade to session token
      * @param mixed  @options Options to pass to the base curl object
      */
-    public function __construct($sessiontoken = '', $authtoken = '', $options = array()){
+    public function __construct($sessiontoken = '', $authtoken = '', $options = array(), $googleapikey = ''){
         parent::__construct($options);
 
+        $this->googleapikey = $googleapikey;
         if( $authtoken ){
-            $gauth = new google_authsub_request($authtoken);
+            $gauth = new google_authsub_request($authtoken, $googleapikey);
             $sessiontoken = $gauth->get_session_token();
         }
 
@@ -214,12 +241,13 @@ class google_authsub extends google_auth_request {
      * @param string $realm The google realm which is access is being requested
      * @return string URL to bounce the user to
      */
-    public static function login_url($returnaddr, $realm){
+    public static function login_url($returnaddr, $realm, $usesecure = ''){
+        $secure = $usesecure ? '1' : '0';
         $uri = google_authsub::LOGINAUTH_URL.'?next='
             .urlencode($returnaddr)
             .'&scope='
             .urlencode($realm)
-            .'&session=1&secure=0';
+            .'&session=1&secure='.$secure;
 
         return $uri;
     }
@@ -227,6 +255,25 @@ class google_authsub extends google_auth_request {
     public static function get_auth_header_name(){
         return 'AuthSub token=';
     }
+
+    public function get_auth_header($url = '') {
+        if (!$this->googleapikey) {
+            return "Authorization: AuthSub token=\"$this->token\"";
+        } else {
+            // We are using secure tokens. Authorization is a little more involved.
+            $timestamp = time();
+            $nonce = md5(microtime() . mt_rand());
+            $data = "GET $url $timestamp $nonce";
+
+            $privatekeyid = openssl_get_privatekey($this->googleapikey);
+            openssl_sign($data, $signature, $privatekeyid, OPENSSL_ALGO_SHA1);
+            openssl_free_key($privatekeyid);
+
+            $sigalg = 'rsa-sha1';
+            $sig = base64_encode($signature);
+            return "Authorization: AuthSub token=\"$this->token\" data=\"$data\" sig=\"$sig\" sigalg=\"$sigalg\"";
+       }
+   }
 }
 
 /**
