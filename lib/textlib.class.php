@@ -15,8 +15,9 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
+ * Defines string apis
+ *
  * @package    core
- * @subpackage lib
  * @copyright  (C) 2001-3001 Eloy Lafuente (stronk7) {@link http://contiento.com}
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -24,18 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 /**
- * Original singleton helper function, please use static methods instead,
- * ex: textlib::convert()
+ * defines string api's for manipulating strings
  *
- * @deprecated
- * @return textlib instance
- */
-function textlib_get_instance() {
-    return new textlib();
-}
-
-
-/**
  * This class is used to manipulate strings under Moodle 1.6 an later. As
  * utf-8 text become mandatory a pool of safe functions under this encoding
  * become necessary. The name of the methods is exactly the
@@ -50,19 +41,26 @@ function textlib_get_instance() {
  * its capabilities so, don't forget to make the conversion
  * from every wrapper function!
  *
- * @package    core
- * @subpackage lib
+ * @package   core
+ * @category  string
  * @copyright 1999 onwards Martin Dougiamas  {@link http://moodle.com}
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class textlib {
 
     /**
-     * Return t3lib helper class
+     * Return t3lib helper class, which is used for conversion between charsets
+     *
+     * @param bool $reset
      * @return t3lib_cs
      */
-    protected static function typo3() {
+    protected static function typo3($reset = false) {
         static $typo3cs = null;
+
+        if ($reset) {
+            $typo3cs = null;
+            return null;
+        }
 
         if (isset($typo3cs)) {
             return $typo3cs;
@@ -73,6 +71,8 @@ class textlib {
         // Required files
         require_once($CFG->libdir.'/typo3/class.t3lib_cs.php');
         require_once($CFG->libdir.'/typo3/class.t3lib_div.php');
+        require_once($CFG->libdir.'/typo3/interface.t3lib_singleton.php');
+        require_once($CFG->libdir.'/typo3/class.t3lib_l10n_locales.php');
 
         // do not use mbstring or recode because it may return invalid results in some corner cases
         $GLOBALS['TYPO3_CONF_VARS']['SYS']['t3lib_cs_convMethod'] = 'iconv';
@@ -93,14 +93,24 @@ class textlib {
 
         // This full path constants must be defined too, transforming backslashes
         // to forward slashed because Typo3 requires it.
-        define ('PATH_t3lib', str_replace('\\','/',$CFG->libdir.'/typo3/'));
-        define ('PATH_typo3', str_replace('\\','/',$CFG->libdir.'/typo3/'));
-        define ('PATH_site', str_replace('\\','/',$CFG->tempdir.'/'));
-        define ('TYPO3_OS', stristr(PHP_OS,'win')&&!stristr(PHP_OS,'darwin')?'WIN':'');
+        if (!defined('PATH_t3lib')) {
+            define('PATH_t3lib', str_replace('\\','/',$CFG->libdir.'/typo3/'));
+            define('PATH_typo3', str_replace('\\','/',$CFG->libdir.'/typo3/'));
+            define('PATH_site', str_replace('\\','/',$CFG->tempdir.'/'));
+            define('TYPO3_OS', stristr(PHP_OS,'win')&&!stristr(PHP_OS,'darwin')?'WIN':'');
+        }
 
         $typo3cs = new t3lib_cs();
 
         return $typo3cs;
+    }
+
+    /**
+     * Reset internal textlib caches.
+     * @static
+     */
+    public static function reset_caches() {
+        self::typo3(true);
     }
 
     /**
@@ -174,7 +184,7 @@ class textlib {
         if ($result === false or $result === '') {
             // note: iconv is prone to return empty string when invalid char encountered, or false if encoding unsupported
             $oldlevel = error_reporting(E_PARSE);
-            $result = self::typo3()->conv($text, $fromCS, $toCS);
+            $result = self::typo3()->conv((string)$text, $fromCS, $toCS);
             error_reporting($oldlevel);
         }
 
@@ -182,32 +192,53 @@ class textlib {
     }
 
     /**
-     * Multibyte safe substr() function, uses iconv for utf-8, falls back to typo3.
+     * Multibyte safe substr() function, uses mbstring or iconv for UTF-8, falls back to typo3.
      *
-     * @param string $text
+     * @param string $text string to truncate
      * @param int $start negative value means from end
-     * @param int $len
+     * @param int $len maximum length of characters beginning from start
      * @param string $charset encoding of the text
-     * @return string
+     * @return string portion of string specified by the $start and $len
      */
     public static function substr($text, $start, $len=null, $charset='utf-8') {
         $charset = self::parse_charset($charset);
 
         if ($charset === 'utf-8') {
-            return iconv_substr($text, $start, $len, $charset);
+            if (function_exists('mb_substr')) {
+                // this is much faster than iconv - see MDL-31142
+                if ($len === null) {
+                    $oldcharset = mb_internal_encoding();
+                    mb_internal_encoding('UTF-8');
+                    $result = mb_substr($text, $start);
+                    mb_internal_encoding($oldcharset);
+                    return $result;
+                } else {
+                    return mb_substr($text, $start, $len, 'UTF-8');
+                }
+
+            } else {
+                if ($len === null) {
+                    $len = iconv_strlen($text, 'UTF-8');
+                }
+                return iconv_substr($text, $start, $len, 'UTF-8');
+            }
         }
 
         $oldlevel = error_reporting(E_PARSE);
-        $result = self::typo3()->substr($charset, $text, $start, $len);
+        if ($len === null) {
+            $result = self::typo3()->substr($charset, (string)$text, $start);
+        } else {
+            $result = self::typo3()->substr($charset, (string)$text, $start, $len);
+        }
         error_reporting($oldlevel);
 
         return $result;
     }
 
     /**
-     * Multibyte safe strlen() function, uses iconv for utf-8, falls back to typo3.
+     * Multibyte safe strlen() function, uses mbstring or iconv for UTF-8, falls back to typo3.
      *
-     * @param string $text
+     * @param string $text input string
      * @param string $charset encoding of the text
      * @return int number of characters
      */
@@ -215,11 +246,15 @@ class textlib {
         $charset = self::parse_charset($charset);
 
         if ($charset === 'utf-8') {
-            return iconv_strlen($text, $charset);
+            if (function_exists('mb_strlen')) {
+                return mb_strlen($text, 'UTF-8');
+            } else {
+                return iconv_strlen($text, 'UTF-8');
+            }
         }
 
         $oldlevel = error_reporting(E_PARSE);
-        $result = self::typo3()->strlen($charset, $text);
+        $result = self::typo3()->strlen($charset, (string)$text);
         error_reporting($oldlevel);
 
         return $result;
@@ -228,7 +263,7 @@ class textlib {
     /**
      * Multibyte safe strtolower() function, uses mbstring, falls back to typo3.
      *
-     * @param string $text
+     * @param string $text input string
      * @param string $charset encoding of the text (may not work for all encodings)
      * @return string lower case text
      */
@@ -236,11 +271,11 @@ class textlib {
         $charset = self::parse_charset($charset);
 
         if ($charset === 'utf-8' and function_exists('mb_strtolower')) {
-            return mb_strtolower($text, $charset);
+            return mb_strtolower($text, 'UTF-8');
         }
 
         $oldlevel = error_reporting(E_PARSE);
-        $result = self::typo3()->conv_case($charset, $text, 'toLower');
+        $result = self::typo3()->conv_case($charset, (string)$text, 'toLower');
         error_reporting($oldlevel);
 
         return $result;
@@ -249,7 +284,7 @@ class textlib {
     /**
      * Multibyte safe strtoupper() function, uses mbstring, falls back to typo3.
      *
-     * @param string $text
+     * @param string $text input string
      * @param string $charset encoding of the text (may not work for all encodings)
      * @return string upper case text
      */
@@ -257,51 +292,61 @@ class textlib {
         $charset = self::parse_charset($charset);
 
         if ($charset === 'utf-8' and function_exists('mb_strtoupper')) {
-            return mb_strtoupper($text, $charset);
+            return mb_strtoupper($text, 'UTF-8');
         }
 
         $oldlevel = error_reporting(E_PARSE);
-        $result = self::typo3()->conv_case($charset, $text, 'toUpper');
+        $result = self::typo3()->conv_case($charset, (string)$text, 'toUpper');
         error_reporting($oldlevel);
 
         return $result;
     }
 
     /**
-     * UTF-8 ONLY safe strpos(), uses iconv..
+     * Find the position of the first occurrence of a substring in a string.
+     * UTF-8 ONLY safe strpos(), uses mbstring, falls back to iconv.
      *
-     * @param string $haystack
-     * @param string $needle
-     * @param int $offset
-     * @return string
+     * @param string $haystack the string to search in
+     * @param string $needle one or more charachters to search for
+     * @param int $offset offset from begining of string
+     * @return int the numeric position of the first occurrence of needle in haystack.
      */
     public static function strpos($haystack, $needle, $offset=0) {
-        return iconv_strpos($haystack, $needle, $offset, 'utf-8');
+        if (function_exists('mb_strpos')) {
+            return mb_strpos($haystack, $needle, $offset, 'UTF-8');
+        } else {
+            return iconv_strpos($haystack, $needle, $offset, 'UTF-8');
+        }
     }
 
     /**
-     * UTF-8 ONLY safe strrpos(), uses iconv.
+     * Find the position of the last occurrence of a substring in a string
+     * UTF-8 ONLY safe strrpos(), uses mbstring, falls back to iconv.
      *
-     * @param string $haystack
-     * @param string $needle
-     * @return string
+     * @param string $haystack the string to search in
+     * @param string $needle one or more charachters to search for
+     * @return int the numeric position of the last occurrence of needle in haystack
      */
     public static function strrpos($haystack, $needle) {
-        return iconv_strrpos($haystack, $needle, 'utf-8');
+        if (function_exists('mb_strpos')) {
+            return mb_strrpos($haystack, $needle, null, 'UTF-8');
+        } else {
+            return iconv_strrpos($haystack, $needle, 'UTF-8');
+        }
     }
 
     /**
      * Try to convert upper unicode characters to plain ascii,
      * the returned string may contain unconverted unicode characters.
      *
-     * @param string $text
+     * @param string $text input string
      * @param string $charset encoding of the text
-     * @return string
+     * @return string converted ascii string
      */
     public static function specialtoascii($text, $charset='utf-8') {
         $charset = self::parse_charset($charset);
         $oldlevel = error_reporting(E_PARSE);
-        $result = self::typo3()->specCharsToASCII($charset, $text);
+        $result = self::typo3()->specCharsToASCII($charset, (string)$text);
         error_reporting($oldlevel);
         return $result;
     }
@@ -311,9 +356,9 @@ class textlib {
      * This function seems to be 100% compliant with RFC1342. Credits go to:
      * paravoid (http://www.php.net/manual/en/function.mb-encode-mimeheader.php#60283).
      *
-     * @param string $text
+     * @param string $text input string
      * @param string $charset encoding of the text
-     * @return string
+     * @return string base64 encoded header
      */
     public static function encode_mimeheader($text, $charset='utf-8') {
         if (empty($text)) {
@@ -399,9 +444,9 @@ class textlib {
      * http://php.net/manual/en/function.html-entity-decode.php#75153
      * with some custom mods to provide more functionality
      *
-     * @param    string    $str      input string
-     * @param    boolean   $htmlent  convert also html entities (defaults to true)
-     * @return   string
+     * @param string $str input string
+     * @param boolean $htmlent convert also html entities (defaults to true)
+     * @return string encoded UTF-8 string
      *
      * NOTE: we could have used typo3 entities_to_utf8() here
      *       but the direct alternative used runs 400% quicker
@@ -433,18 +478,18 @@ class textlib {
     /**
      * Converts all Unicode chars > 127 to numeric entities &#nnnn; or &#xnnn;.
      *
-     * @param    string   $str      input string
-     * @param    boolean  $dec      output decadic only number entities
-     * @param    boolean  $nonnum   remove all non-numeric entities
-     * @return   string converted string
+     * @param string $str input string
+     * @param boolean $dec output decadic only number entities
+     * @param boolean $nonnum remove all non-numeric entities
+     * @return string converted string
      */
     public static function utf8_to_entities($str, $dec=false, $nonnum=false) {
         // Avoid some notices from Typo3 code
         $oldlevel = error_reporting(E_PARSE);
         if ($nonnum) {
-            $str = self::typo3()->entities_to_utf8($str, true);
+            $str = self::typo3()->entities_to_utf8((string)$str, true);
         }
-        $result = self::typo3()->utf8_to_entities($str);
+        $result = self::typo3()->utf8_to_entities((string)$str);
         if ($dec) {
             $result = preg_replace('/&#x([0-9a-f]+);/ie', "'&#'.hexdec('$1').';'", $result);
         }
@@ -454,9 +499,9 @@ class textlib {
     }
 
     /**
-     * Removes the BOM from unicode string - see http://unicode.org/faq/utf_bom.html
+     * Removes the BOM from unicode string {@link http://unicode.org/faq/utf_bom.html}
      *
-     * @param string $str
+     * @param string $str input string
      * @return string
      */
     public static function trim_utf8_bom($str) {
@@ -469,6 +514,7 @@ class textlib {
 
     /**
      * Returns encoding options for select boxes, utf-8 and platform encoding first
+     *
      * @return array encodings
      */
     public static function get_encodings() {
@@ -515,7 +561,7 @@ class textlib {
      * Makes first letter of each word capital - words must be separated by spaces.
      * Use with care, this function does not work properly in many locales!!!
      *
-     * @param string $text
+     * @param string $text input string
      * @return string
      */
     public static function strtotitle($text) {
@@ -563,8 +609,7 @@ class textlib {
 /**
  * A collator class with static methods that can be used for sorting.
  *
- * @package    core
- * @subpackage lib
+ * @package   core
  * @copyright 2011 Sam Hemelryk
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -664,6 +709,8 @@ abstract class collatorlib {
      *   0 if str1 is equal to str2
      *  -1 if str1 is less than str2
      *
+     * @param string $str1 first string to compare
+     * @param string $str2 second string to compare
      * @return int
      */
     public static function compare($str1, $str2) {
@@ -699,11 +746,12 @@ abstract class collatorlib {
 }
 
 /**
+ * Object comparison using collator
+ *
  * Abstract class to aid the sorting of objects with respect to proper language
  * comparison using collator
  *
- * @package    core
- * @subpackage lib
+ * @package   core
  * @copyright 2011 Sam Hemelryk
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -725,10 +773,12 @@ abstract class collatorlib_comparison {
 }
 
 /**
+ * Compare properties of two objects
+ *
  * A comparison helper for comparing properties of two objects
  *
- * @package    core
- * @subpackage lib
+ * @package   core
+ * @category  string
  * @copyright 2011 Sam Hemelryk
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -738,6 +788,8 @@ class collatorlib_property_comparison extends collatorlib_comparison {
     protected $property;
 
     /**
+     * Constructor
+     *
      * @param string $property
      */
     public function __construct($property) {
@@ -762,10 +814,11 @@ class collatorlib_property_comparison extends collatorlib_comparison {
 }
 
 /**
+ * Compare method of two objects
+ *
  * A comparison helper for comparing the result of a method on two objects
  *
- * @package    core
- * @subpackage lib
+ * @package   core
  * @copyright 2011 Sam Hemelryk
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -775,6 +828,8 @@ class collatorlib_method_comparison extends collatorlib_comparison {
     protected $method;
 
     /**
+     * Constructor
+     *
      * @param string $method The method to call against each object
      */
     public function __construct($method) {

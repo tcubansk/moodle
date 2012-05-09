@@ -30,6 +30,5 @@ function xmldb_tool_customlang_upgrade($oldversion) {
     $dbman = $DB->get_manager();
 
 
-
     return true;
 }

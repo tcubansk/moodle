@@ -27,6 +27,7 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->libdir . '/questionlib.php');
 require_once($CFG->dirroot . '/question/type/numerical/question.php');
 
 
@@ -281,7 +282,9 @@ class qtype_numerical extends question_type {
         } else if (isset($question->showunits)) {
             // Updated import, e.g. Moodle XML.
             $options->showunits = $question->showunits;
-
+            if (isset($question->unitgradingtype)) {
+                $options->unitgradingtype = $question->unitgradingtype;
+            }
         } else {
             // Legacy import.
             if ($defaultunit = $this->get_default_numerical_unit($question)) {
@@ -418,10 +421,13 @@ class qtype_numerical extends question_type {
 
         $unit = $this->get_default_numerical_unit($questiondata);
 
+        $starfound = false;
         foreach ($questiondata->options->answers as $aid => $answer) {
             $responseclass = $answer->answer;
 
-            if ($responseclass != '*') {
+            if ($responseclass === '*') {
+                $starfound = true;
+            } else {
                 $responseclass = $this->add_unit($questiondata, $responseclass, $unit);
 
                 $ans = new qtype_numerical_answer($answer->id, $answer->answer, $answer->fraction,
@@ -433,6 +439,12 @@ class qtype_numerical extends question_type {
             $responses[$aid] = new question_possible_response($responseclass,
                     $answer->fraction);
         }
+
+        if (!$starfound) {
+            $responses[0] = new question_possible_response(
+                    get_string('didnotmatchanyanswer', 'question'), 0);
+        }
+
         $responses[null] = question_possible_response::no_response();
 
         return array($questiondata->id => $responses);
@@ -461,6 +473,7 @@ class qtype_numerical extends question_type {
 
         parent::move_files($questionid, $oldcontextid, $newcontextid);
         $this->move_files_in_answers($questionid, $oldcontextid, $newcontextid);
+        $this->move_files_in_hints($questionid, $oldcontextid, $newcontextid);
     }
 
     protected function delete_files($questionid, $contextid) {
@@ -468,6 +481,7 @@ class qtype_numerical extends question_type {
 
         parent::delete_files($questionid, $contextid);
         $this->delete_files_in_answers($questionid, $contextid);
+        $this->delete_files_in_hints($questionid, $contextid);
     }
 }
 
@@ -641,16 +655,17 @@ class qtype_numerical_answer_processor {
 
         $numberstring = $matches[0];
         if ($this->unitsbefore) {
-            $unit = substr($response, 0, -strlen($numberstring));
+            // substr returns false when it means '', so cast back to string.
+            $unit = (string) substr($response, 0, -strlen($numberstring));
         } else {
-            $unit = substr($response, strlen($numberstring));
+            $unit = (string) substr($response, strlen($numberstring));
         }
 
         if (!is_null($separateunit)) {
             $unit = $separateunit;
         }
 
-        if ($unit && $this->is_known_unit($unit)) {
+        if ($this->is_known_unit($unit)) {
             $multiplier = 1 / $this->units[$unit];
         } else {
             $multiplier = null;

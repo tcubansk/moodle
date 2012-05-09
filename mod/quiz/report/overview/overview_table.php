@@ -17,107 +17,131 @@
 /**
  * This file defines the quiz grades table.
  *
- * @package    quiz
- * @subpackage overview
- * @copyright  2008 Jamie Pratt
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @package   quiz_overview
+ * @copyright 2008 Jamie Pratt
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->dirroot . '/mod/quiz/report/attemptsreport_table.php');
+
 
 /**
  * This is a table subclass for displaying the quiz grades report.
  *
- * @copyright  2008 Jamie Pratt
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @copyright 2008 Jamie Pratt
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-class quiz_report_overview_table extends quiz_attempt_report_table {
+class quiz_overview_table extends quiz_attempts_report_table {
 
-    protected $candelete;
     protected $regradedqs = array();
 
-    public function __construct($quiz, $context, $qmsubselect, $groupstudents,
-            $students, $detailedmarks, $questions, $candelete, $reporturl, $displayoptions) {
+    /**
+     * Constructor
+     * @param object $quiz
+     * @param context $context
+     * @param string $qmsubselect
+     * @param quiz_overview_options $options
+     * @param array $groupstudents
+     * @param array $students
+     * @param array $questions
+     * @param moodle_url $reporturl
+     */
+    public function __construct($quiz, $context, $qmsubselect,
+            quiz_overview_options $options, $groupstudents, $students, $questions, $reporturl) {
         parent::__construct('mod-quiz-report-overview-report', $quiz , $context,
-                $qmsubselect, $groupstudents, $students, $questions, $candelete,
-                $reporturl, $displayoptions);
-        $this->detailedmarks = $detailedmarks;
+                $qmsubselect, $options, $groupstudents, $students, $questions, $reporturl);
     }
 
     public function build_table() {
         global $DB;
 
-        if ($this->rawdata) {
-            $this->strtimeformat = str_replace(',', '', get_string('strftimedatetime'));
-            parent::build_table();
+        if (!$this->rawdata) {
+            return;
+        }
 
-            //end of adding data from attempts data to table / download
-            //now add averages at bottom of table :
-            $params = array($this->quiz->id);
-            $averagesql = '
-                    SELECT AVG(qg.grade) AS grade, COUNT(qg.grade) AS numaveraged
-                    FROM {quiz_grades} qg
-                    WHERE quiz = ?';
+        $this->strtimeformat = str_replace(',', ' ', get_string('strftimedatetime'));
+        parent::build_table();
 
-            $this->add_separator();
-            if ($this->is_downloading()) {
-                $namekey = 'lastname';
-            } else {
-                $namekey = 'fullname';
-            }
-            if ($this->groupstudents) {
-                list($usql, $uparams) = $DB->get_in_or_equal($this->groupstudents);
-                $record = $DB->get_record_sql($averagesql . ' AND qg.userid ' . $usql,
-                        array_merge($params, $uparams));
-                $groupaveragerow = array(
-                        $namekey => get_string('groupavg', 'grades'),
-                        'sumgrades' => $this->format_average($record),
-                        'feedbacktext'=> strip_tags(quiz_report_feedback_for_grade(
-                                            $record->grade, $this->quiz->id, $this->context)));
-                if ($this->detailedmarks && ($this->quiz->attempts == 1 || $this->qmsubselect)) {
-                    $avggradebyq = $this->load_average_question_grades($this->groupstudents);
-                    $groupaveragerow += $this->format_average_grade_for_questions($avggradebyq);
-                }
-                $this->add_data_keyed($groupaveragerow);
-            }
+        // End of adding the data from attempts. Now add averages at bottom.
+        $this->add_separator();
 
-            if ($this->students) {
-                list($usql, $uparams) = $DB->get_in_or_equal($this->students);
-                $record = $DB->get_record_sql($averagesql . ' AND qg.userid ' . $usql,
-                        array_merge($params, $uparams));
-                $overallaveragerow = array(
-                        $namekey => get_string('overallaverage', 'grades'),
-                        'sumgrades' => $this->format_average($record),
-                        'feedbacktext'=> strip_tags(quiz_report_feedback_for_grade(
-                                            $record->grade, $this->quiz->id, $this->context)));
-                if ($this->detailedmarks && ($this->quiz->attempts == 1 || $this->qmsubselect)) {
-                    $avggradebyq = $this->load_average_question_grades($this->students);
-                    $overallaveragerow += $this->format_average_grade_for_questions($avggradebyq);
-                }
-                $this->add_data_keyed($overallaveragerow);
-            }
+        if ($this->groupstudents) {
+            $this->add_average_row(get_string('groupavg', 'grades'), $this->groupstudents);
+        }
+
+        if ($this->students) {
+            $this->add_average_row(get_string('overallaverage', 'grades'), $this->students);
         }
     }
 
+    /**
+     * Add an average grade over the attempts of a set of users.
+     * @param string $label the title ot use for this row.
+     * @param array $users the users to average over.
+     */
+    protected function add_average_row($label, $users) {
+        global $DB;
+
+        list($fields, $from, $where, $params) = $this->base_sql($users);
+        $record = $DB->get_record_sql("
+                SELECT AVG(quiza.sumgrades) AS grade, COUNT(quiza.sumgrades) AS numaveraged
+                  FROM $from
+                 WHERE $where", $params);
+        $record->grade = quiz_rescale_grade($record->grade, $this->quiz, false);
+
+        if ($this->is_downloading()) {
+            $namekey = 'lastname';
+        } else {
+            $namekey = 'fullname';
+        }
+        $averagerow = array(
+            $namekey    => $label,
+            'sumgrades' => $this->format_average($record),
+            'feedbacktext'=> strip_tags(quiz_report_feedback_for_grade(
+                                        $record->grade, $this->quiz->id, $this->context))
+        );
+
+        if ($this->options->slotmarks) {
+            $dm = new question_engine_data_mapper();
+            $qubaids = new qubaid_join($from, 'quiza.uniqueid', $where, $params);
+            $avggradebyq = $dm->load_average_marks($qubaids, array_keys($this->questions));
+
+            $averagerow += $this->format_average_grade_for_questions($avggradebyq);
+        }
+
+        $this->add_data_keyed($averagerow);
+    }
+
+    /**
+     * Helper userd by {@link add_average_row()}.
+     * @param array $gradeaverages the raw grades.
+     * @return array the (partial) row of data.
+     */
     protected function format_average_grade_for_questions($gradeaverages) {
         $row = array();
+
         if (!$gradeaverages) {
             $gradeaverages = array();
         }
+
         foreach ($this->questions as $question) {
             if (isset($gradeaverages[$question->slot]) && $question->maxmark > 0) {
                 $record = $gradeaverages[$question->slot];
                 $record->grade = quiz_rescale_grade(
                         $record->averagefraction * $question->maxmark, $this->quiz, false);
+
             } else {
                 $record = new stdClass();
                 $record->grade = null;
-                $record->numaveraged = null;
+                $record->numaveraged = 0;
             }
+
             $row['qsgrade' . $question->slot] = $this->format_average($record, true);
         }
+
         return $row;
     }
 
@@ -136,7 +160,7 @@ class quiz_report_overview_table extends quiz_attempt_report_table {
 
         if ($this->download) {
             return $average;
-        } else if (is_null($record->numaveraged)) {
+        } else if (is_null($record->numaveraged) || $record->numaveraged == 0) {
             return html_writer::tag('span', html_writer::tag('span',
                     $average, array('class' => 'average')), array('class' => 'avgcell'));
         } else {
@@ -147,49 +171,16 @@ class quiz_report_overview_table extends quiz_attempt_report_table {
         }
     }
 
-    public function wrap_html_start() {
-        if ($this->is_downloading() || !$this->candelete) {
-            return;
-        }
-
-        // Start form
-        $url = new moodle_url($this->reporturl, $this->displayoptions +
-                array('sesskey' => sesskey()));
-        echo '<div id="tablecontainer" class="overview-tablecontainer">';
-        echo '<form id="attemptsform" method="post" action="' .
-                $this->reporturl->out_omit_querystring() . '">';
-        echo '<div style="display: none;">';
-        echo html_writer::input_hidden_params($url);
-        echo '</div>';
-        echo '<div>';
-    }
-
-    public function wrap_html_finish() {
-        if ($this->is_downloading() || !$this->candelete) {
-            return;
-        }
-
-        // TODO add back are you sure, and convert to html_writer.
-        echo '<div id="commands">';
-        echo '<a href="javascript:select_all_in(\'DIV\', null, \'tablecontainer\');">' .
-                get_string('selectall', 'quiz') . '</a> / ';
-        echo '<a href="javascript:deselect_all_in(\'DIV\', null, \'tablecontainer\');">' .
-                get_string('selectnone', 'quiz') . '</a> ';
-        echo '&nbsp;&nbsp;';
+    protected function submit_buttons() {
         if (has_capability('mod/quiz:regrade', $this->context)) {
             echo '<input type="submit" name="regrade" value="' .
                     get_string('regradeselected', 'quiz_overview') . '"/>';
         }
-        echo '<input type="submit" name="delete" value="' .
-                get_string('deleteselected', 'quiz_overview') . '"/>';
-        echo '</div>';
-        // Close form
-        echo '</div>';
-        echo '</form></div>';
+        parent::submit_buttons();
     }
 
     public function col_sumgrades($attempt) {
-        if (!$attempt->timefinish) {
+        if ($attempt->state != quiz_attempt::FINISHED) {
             return '-';
         }
 
@@ -236,6 +227,7 @@ class quiz_report_overview_table extends quiz_attempt_report_table {
             return null;
         }
         $slot = $matches[1];
+
         $question = $this->questions[$slot];
         if (!isset($this->lateststeps[$attempt->usageid][$slot])) {
             return '-';
@@ -288,7 +280,7 @@ class quiz_report_overview_table extends quiz_attempt_report_table {
     }
 
     protected function requires_latest_steps_loaded() {
-        return $this->detailedmarks;
+        return $this->options->slotmarks;
     }
 
     protected function is_latest_step_column($column) {
@@ -305,33 +297,9 @@ class quiz_report_overview_table extends quiz_attempt_report_table {
     public function query_db($pagesize, $useinitialsbar = true) {
         parent::query_db($pagesize, $useinitialsbar);
 
-        if ($this->detailedmarks && has_capability('mod/quiz:regrade', $this->context)) {
+        if ($this->options->slotmarks && has_capability('mod/quiz:regrade', $this->context)) {
             $this->regradedqs = $this->get_regraded_questions();
         }
-    }
-
-    /**
-     * Load the average grade for each question, averaged over particular users.
-     * @param array $userids the user ids to average over.
-     */
-    protected function load_average_question_grades($userids) {
-        global $DB;
-
-        $qmfilter = '';
-        if ($this->quiz->attempts != 1) {
-            $qmfilter = '(' . quiz_report_qm_filter_select($this->quiz, 'quiza') . ') AND ';
-        }
-
-        list($usql, $params) = $DB->get_in_or_equal($userids, SQL_PARAMS_NAMED, 'u');
-        $params['quizid'] = $this->quiz->id;
-        $qubaids = new qubaid_join(
-                '{quiz_attempts} quiza',
-                'quiza.uniqueid',
-                "quiza.userid $usql AND quiza.quiz = :quizid",
-                $params);
-
-        $dm = new question_engine_data_mapper();
-        return $dm->load_average_marks($qubaids, array_keys($this->questions));
     }
 
     /**

@@ -72,6 +72,7 @@ M.core_filepicker.init = function(Y, options) {
 
     Y.extend(FilePickerHelper, Y.Base, {
         api: M.cfg.wwwroot+'/repository/repository_ajax.php',
+        cached_responses: {},
 
         initializer: function(options) {
             this.options = options;
@@ -149,7 +150,11 @@ M.core_filepicker.init = function(Y, options) {
                         // error checking
                         if (data && data.error) {
                             scope.print_msg(data.error, 'error');
-                            scope.list();
+                            if (args.onerror) {
+                                args.onerror(id,data,p);
+                            } else {
+                                Y.one(panel_id).set('innerHTML', '');
+                            }
                             return;
                         } else if (data && data.event) {
                             switch (data.event) {
@@ -163,6 +168,11 @@ M.core_filepicker.init = function(Y, options) {
                             if (data.msg) {
                                 scope.print_msg(data.msg, 'info');
                             }
+                            // cache result if applicable
+                            if (args.action != 'upload' && data.allowcaching) {
+                                scope.cached_responses[params] = data;
+                            }
+                            // invoke callback
                             args.callback(id,data,p);
                         }
                     }
@@ -179,9 +189,15 @@ M.core_filepicker.init = function(Y, options) {
             if (args.form) {
                 cfg.form = args.form;
             }
-            Y.io(api, cfg);
-            if (redraw) {
-                this.wait('load');
+            // check if result of the same request has been already cached. If not, request it
+            // (never applicable in case of form submission and/or upload action):
+            if (!args.form && args.action != 'upload' && scope.cached_responses[params]) {
+                args.callback(null, scope.cached_responses[params], {scope: scope})
+            } else {
+                Y.io(api, cfg);
+                if (redraw) {
+                    this.wait('load');
+                }
             }
         },
         process_existing_file: function(data) {
@@ -211,6 +227,11 @@ M.core_filepicker.init = function(Y, options) {
                         if (scope.options.editor_target && scope.options.env == 'editor') {
                             scope.options.editor_target.value = data.existingfile.url;
                             scope.options.editor_target.onchange();
+                        } else if (scope.options.env === 'filepicker') {
+                            var fileinfo = {'client_id':client_id,
+                                    'url':data.existingfile.url,
+                                    'file':data.existingfile.filename};
+                            scope.options.formcallback.apply(scope, [fileinfo]);
                         }
                     }
                 }, true);
@@ -222,14 +243,16 @@ M.core_filepicker.init = function(Y, options) {
                 }
                 this.cancel();
                 scope.hide();
-                data.client_id = client_id;
                 var formcallback_scope = null;
                 if (scope.options.magicscope) {
                     formcallback_scope = scope.options.magicscope;
                 } else {
                     formcallback_scope = scope;
                 }
-                scope.options.formcallback.apply(formcallback_scope, [data]);
+                var fileinfo = {'client_id':client_id,
+                                'url':data.newfile.url,
+                                'file':data.newfile.filename};
+                scope.options.formcallback.apply(formcallback_scope, [fileinfo]);
             }
             var handleCancel = function() {
                 // Delete tmp file
@@ -304,15 +327,12 @@ M.core_filepicker.init = function(Y, options) {
             if (type=='error') {
                 header = M.str.moodle.error;
             }
-            this.msg_dlg.setHeader(type);
+            this.msg_dlg.setHeader(header);
             this.msg_dlg.show();
         },
         build_tree: function(node, level) {
             var client_id = this.options.client_id;
             var dynload = this.active_repo.dynload;
-            if(node.children) {
-                node.title = '<i><u>'+node.title+'</u></i>';
-            }
             var info = {
                 label:node.title,
                 //title:fp_lang.date+' '+node.date+fp_lang.size+' '+node.size,
@@ -649,13 +669,13 @@ M.core_filepicker.init = function(Y, options) {
                     params['author'] = author.get('value');
                 }
 
-                if (this.options.env == 'editor') {
+                if (this.options.externallink && this.options.env == 'editor') {
                     // in editor, images are stored in '/' only
                     params.savepath = '/';
                     // when image or media button is clicked
                     if ( this.options.return_types != 1 ) {
-                        var linkexternal = Y.one('#linkexternal-'+client_id).get('checked');
-                        if (linkexternal) {
+                        var linkexternal = Y.one('#linkexternal-'+client_id);
+                        if (linkexternal && linkexternal.get('checked')) {
                             params['linkexternal'] = 'yes';
                         }
                     } else {
@@ -674,6 +694,9 @@ M.core_filepicker.init = function(Y, options) {
                     client_id: client_id,
                     repository_id: repository_id,
                     'params': params,
+                    onerror: function(id, obj, args) {
+                        scope.view_files();
+                    },
                     callback: function(id, obj, args) {
                         if (scope.options.editor_target && scope.options.env=='editor') {
                             scope.options.editor_target.value=obj.url;
@@ -793,16 +816,22 @@ M.core_filepicker.init = function(Y, options) {
             Y.on('contentready', function(el) {
                 var list = Y.one(el);
                 var count = 0;
+                // Resort the repositories by sortorder
+                var sorted_repositories = new Array();
                 for (var i in r) {
-                    var id = 'repository-'+client_id+'-'+r[i].id;
+                    sorted_repositories[r[i].sortorder - 1] = r[i];
+                }
+                for (var i in sorted_repositories){
+                    repository = sorted_repositories[i];
+                    var id = 'repository-'+client_id+'-'+repository.id;
                     var link_id = id + '-link';
-                    list.append('<li id="'+id+'"><a class="fp-repo-name" id="'+link_id+'" href="###">'+r[i].name+'</a></li>');
-                    Y.one('#'+link_id).prepend('<img src="'+r[i].icon+'" width="16" height="16" />&nbsp;');
+                    list.append('<li id="'+id+'"><a class="fp-repo-name" id="'+link_id+'" href="###">'+repository.name+'</a></li>');
+                    Y.one('#'+link_id).prepend('<img src="'+repository.icon+'" width="16" height="16" />&nbsp;');
                     Y.one('#'+link_id).on('click', function(e, scope, repository_id) {
                         YAHOO.util.Cookie.set('recentrepository', repository_id);
                         scope.repository_id = repository_id;
                         this.list({'repo_id':repository_id});
-                    }, this /*handler running scope*/, this/*second argument*/, r[i].id/*third argument of handler*/);
+                    }, this /*handler running scope*/, this/*second argument*/, repository.id/*third argument of handler*/);
                     count++;
                 }
                 if (count==0) {
@@ -1178,6 +1207,9 @@ M.core_filepicker.init = function(Y, options) {
                         params: {'savepath':scope.options.savepath},
                         repository_id: scope.active_repo.id,
                         form: {id: id, upload:true},
+                        onerror: function(id, o, args) {
+                            scope.create_upload_form(data);
+                        },
                         callback: function(id, o, args) {
                             if (scope.options.editor_target&&scope.options.env=='editor') {
                                 scope.options.editor_target.value=o.url;
@@ -1360,15 +1392,21 @@ M.core_filepicker.init = function(Y, options) {
             var r = this.active_repo;
             var str = '';
             var action = '';
-            if(r.pages > 1) {
+            var lastpage = r.pages;
+            var lastpagetext = r.pages;
+            if (r.pages == -1) {
+                lastpage = r.page + 1;
+                lastpagetext = M.str.moodle.next;
+            }
+            if (lastpage > 1) {
                 str += '<div class="fp-paging" id="paging-'+html_id+'-'+client_id+'">';
                 str += this.get_page_button(1)+'1</a> ';
 
                 var span = 5;
                 var ex = (span-1)/2;
 
-                if (r.page+ex>=r.pages) {
-                    var max = r.pages;
+                if (r.page+ex>=lastpage) {
+                    var max = lastpage;
                 } else {
                     if (r.page<span) {
                         var max = span;
@@ -1395,11 +1433,11 @@ M.core_filepicker.init = function(Y, options) {
                 }
 
                 // won't display upper boundary
-                if (max==r.pages) {
-                    str += this.get_page_button(r.pages)+r.pages+'</a>';
+                if (max==lastpage) {
+                    str += this.get_page_button(lastpage)+lastpagetext+'</a>';
                 } else {
                     str += this.get_page_button(max)+max+'</a>';
-                    str += ' ... '+this.get_page_button(r.pages)+r.pages+'</a>';
+                    str += ' ... '+this.get_page_button(lastpage)+lastpagetext+'</a>';
                 }
                 str += '</div>';
             }

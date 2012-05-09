@@ -18,8 +18,8 @@
 /**
  * A page to display a list of ratings for a given item (forum post etc)
  *
- * @package    core
- * @subpackage rating
+ * @package    core_rating
+ * @category   rating
  * @copyright  2010 Andrew Davis
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -102,8 +102,10 @@ if (!$ratings) {
     $table->colclasses = array('', 'firstname', 'rating', 'time');
     $table->data = array();
 
-    //if the scale was changed after ratings were submitted some ratings may have a value above the current maximum
-    $maxrating = count($scalemenu) - 1;
+    // If the scale was changed after ratings were submitted some ratings may have a value above the current maximum
+    // We can't just do count($scalemenu) - 1 as custom scales start at index 1, not 0
+    $maxrating = max(array_keys($scalemenu));
+
     foreach ($ratings as $rating) {
         //Undo the aliasing of the user id column from user_picture::fields()
         //we could clone the rating object or preserve the rating id if we needed it again

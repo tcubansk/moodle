@@ -81,16 +81,15 @@ function page_get_post_actions() {
 
 /**
  * Add page instance.
- * @param object $data
- * @param object $mform
+ * @param stdClass $data
+ * @param mod_page_mod_form $mform
  * @return int new page instance id
  */
-function page_add_instance($data, $mform) {
+function page_add_instance($data, $mform = null) {
     global $CFG, $DB;
     require_once("$CFG->libdir/resourcelib.php");
 
-    $cmid        = $data->coursemodule;
-    $draftitemid = $data->page['itemid'];
+    $cmid = $data->coursemodule;
 
     $data->timemodified = time();
     $displayoptions = array();
@@ -102,8 +101,10 @@ function page_add_instance($data, $mform) {
     $displayoptions['printintro']   = $data->printintro;
     $data->displayoptions = serialize($displayoptions);
 
-    $data->content       = $data->page['text'];
-    $data->contentformat = $data->page['format'];
+    if ($mform) {
+        $data->content       = $data->page['text'];
+        $data->contentformat = $data->page['format'];
+    }
 
     $data->id = $DB->insert_record('page', $data);
 
@@ -111,7 +112,8 @@ function page_add_instance($data, $mform) {
     $DB->set_field('course_modules', 'instance', $data->id, array('id'=>$cmid));
     $context = get_context_instance(CONTEXT_MODULE, $cmid);
 
-    if ($draftitemid) {
+    if ($mform and !empty($data->page['itemid'])) {
+        $draftitemid = $data->page['itemid'];
         $data->content = file_save_draft_area_files($draftitemid, $context->id, 'mod_page', 'content', 0, page_get_editor_options($context), $data->content);
         $DB->update_record('page', $data);
     }
@@ -285,9 +287,12 @@ function page_get_coursemodule_info($coursemodule) {
 
 /**
  * Lists all browsable file areas
- * @param object $course
- * @param object $cm
- * @param object $context
+ *
+ * @package  mod_page
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
  * @return array
  */
 function page_get_file_areas($course, $cm, $context) {
@@ -298,16 +303,19 @@ function page_get_file_areas($course, $cm, $context) {
 
 /**
  * File browsing support for page module content area.
- * @param object $browser
- * @param object $areas
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param int $itemid
- * @param string $filepath
- * @param string $filename
- * @return object file_info instance or null if not found
+ *
+ * @package  mod_page
+ * @category files
+ * @param stdClass $browser file browser instance
+ * @param stdClass $areas file areas
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param int $itemid item ID
+ * @param string $filepath file path
+ * @param string $filename file name
+ * @return file_info instance or null if not found
  */
 function page_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {
     global $CFG;
@@ -343,15 +351,19 @@ function page_get_file_info($browser, $areas, $course, $cm, $context, $filearea,
 
 /**
  * Serves the page files.
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ *
+ * @package  mod_page
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - just send the file
  */
-function page_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function page_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG, $DB;
     require_once("$CFG->libdir/resourcelib.php");
 
@@ -369,47 +381,46 @@ function page_pluginfile($course, $cm, $context, $filearea, $args, $forcedownloa
         return false;
     }
 
-    array_shift($args); // ignore revision - designed to prevent caching problems only
+    // $arg could be revision number or index.html
+    $arg = array_shift($args);
+    if ($arg == 'index.html' || $arg == 'index.htm') {
+        // serve page content
+        $filename = $arg;
 
-    $fs = get_file_storage();
-    $relativepath = implode('/', $args);
-    $fullpath = "/$context->id/mod_page/$filearea/0/$relativepath";
-    if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
-        $page = $DB->get_record('page', array('id'=>$cm->instance), 'id, legacyfiles', MUST_EXIST);
-        if ($page->legacyfiles != RESOURCELIB_LEGACYFILES_ACTIVE) {
+        if (!$page = $DB->get_record('page', array('id'=>$cm->instance), '*', MUST_EXIST)) {
             return false;
         }
-        if (!$file = resourcelib_try_file_migration('/'.$relativepath, $cm->id, $cm->course, 'mod_page', 'content', 0)) {
-            return false;
+
+        // remove @@PLUGINFILE@@/
+        $content = str_replace('@@PLUGINFILE@@/', '', $page->content);
+
+        $formatoptions = new stdClass;
+        $formatoptions->noclean = true;
+        $formatoptions->overflowdiv = true;
+        $formatoptions->context = $context;
+        $content = format_text($content, $page->contentformat, $formatoptions);
+
+        send_file($content, $filename, 0, 0, true, true);
+    } else {
+        $fs = get_file_storage();
+        $relativepath = implode('/', $args);
+        $fullpath = "/$context->id/mod_page/$filearea/0/$relativepath";
+        if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
+            $page = $DB->get_record('page', array('id'=>$cm->instance), 'id, legacyfiles', MUST_EXIST);
+            if ($page->legacyfiles != RESOURCELIB_LEGACYFILES_ACTIVE) {
+                return false;
+            }
+            if (!$file = resourcelib_try_file_migration('/'.$relativepath, $cm->id, $cm->course, 'mod_page', 'content', 0)) {
+                return false;
+            }
+            //file migrate - update flag
+            $page->legacyfileslast = time();
+            $DB->update_record('page', $page);
         }
-        //file migrate - update flag
-        $page->legacyfileslast = time();
-        $DB->update_record('page', $page);
+
+        // finally send the file
+        send_stored_file($file, 86400, 0, $forcedownload, $options);
     }
-
-    // finally send the file
-    send_stored_file($file, 86400, 0, $forcedownload);
-}
-
-
-/**
- * This function extends the global navigation for the site.
- * It is important to note that you should not rely on PAGE objects within this
- * body of code as there is no guarantee that during an AJAX request they are
- * available
- *
- * @param navigation_node $navigation The page node within the global navigation
- * @param stdClass $course The course object returned from the DB
- * @param stdClass $module The module object returned from the DB
- * @param stdClass $cm The course module instance returned from the DB
- */
-function page_extend_navigation($navigation, $course, $module, $cm) {
-    /**
-     * This is currently just a stub so that it can be easily expanded upon.
-     * When expanding just remove this comment and the line below and then add
-     * you content.
-     */
-    $navigation->nodetype = navigation_node::NODETYPE_LEAF;
 }
 
 /**
@@ -421,4 +432,55 @@ function page_extend_navigation($navigation, $course, $module, $cm) {
 function page_page_type_list($pagetype, $parentcontext, $currentcontext) {
     $module_pagetype = array('mod-page-*'=>get_string('page-mod-page-x', 'page'));
     return $module_pagetype;
+}
+
+/**
+ * Export page resource contents
+ *
+ * @return array of file content
+ */
+function page_export_contents($cm, $baseurl) {
+    global $CFG, $DB;
+    $contents = array();
+    $context = get_context_instance(CONTEXT_MODULE, $cm->id);
+
+    $page = $DB->get_record('page', array('id'=>$cm->instance), '*', MUST_EXIST);
+
+    // page contents
+    $fs = get_file_storage();
+    $files = $fs->get_area_files($context->id, 'mod_page', 'content', 0, 'sortorder DESC, id ASC', false);
+    foreach ($files as $fileinfo) {
+        $file = array();
+        $file['type']         = 'file';
+        $file['filename']     = $fileinfo->get_filename();
+        $file['filepath']     = $fileinfo->get_filepath();
+        $file['filesize']     = $fileinfo->get_filesize();
+        $file['fileurl']      = file_encode_url("$CFG->wwwroot/" . $baseurl, '/'.$context->id.'/mod_page/content/'.$page->revision.$fileinfo->get_filepath().$fileinfo->get_filename(), true);
+        $file['timecreated']  = $fileinfo->get_timecreated();
+        $file['timemodified'] = $fileinfo->get_timemodified();
+        $file['sortorder']    = $fileinfo->get_sortorder();
+        $file['userid']       = $fileinfo->get_userid();
+        $file['author']       = $fileinfo->get_author();
+        $file['license']      = $fileinfo->get_license();
+        $contents[] = $file;
+    }
+
+    // page html conent
+    $filename = 'index.html';
+    $pagefile = array();
+    $pagefile['type']         = 'file';
+    $pagefile['filename']     = $filename;
+    $pagefile['filepath']     = '/';
+    $pagefile['filesize']     = 0;
+    $pagefile['fileurl']      = file_encode_url("$CFG->wwwroot/" . $baseurl, '/'.$context->id.'/mod_page/content/' . $filename, true);
+    $pagefile['timecreated']  = null;
+    $pagefile['timemodified'] = $page->timemodified;
+    // make this file as main file
+    $pagefile['sortorder']    = 1;
+    $pagefile['userid']       = null;
+    $pagefile['author']       = null;
+    $pagefile['license']      = null;
+    $contents[] = $pagefile;
+
+    return $contents;
 }

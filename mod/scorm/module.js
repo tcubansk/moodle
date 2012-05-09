@@ -48,6 +48,24 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
 
     Y.use('yui2-resize', 'yui2-dragdrop', 'yui2-container', 'yui2-button', 'yui2-layout', 'yui2-treeview', 'yui2-json', 'yui2-event', function(Y) {
 
+        YAHOO.widget.TextNode.prototype.getContentHtml = function() {
+            var sb = [];
+            sb[sb.length] = this.href ? '<a' : '<span';
+            sb[sb.length] = ' id="' + YAHOO.lang.escapeHTML(this.labelElId) + '"';
+            sb[sb.length] = ' class="' + YAHOO.lang.escapeHTML(this.labelStyle) + '"';
+            if (this.href) {
+                sb[sb.length] = ' href="' + YAHOO.lang.escapeHTML(this.href) + '"';
+                sb[sb.length] = ' target="' + YAHOO.lang.escapeHTML(this.target) + '"';
+            }
+            if (this.title) {
+                sb[sb.length] = ' title="' + YAHOO.lang.escapeHTML(this.title) + '"';
+            }
+            sb[sb.length] = ' >';
+            sb[sb.length] = this.label;
+            sb[sb.length] = this.href?'</a>':'</span>';
+            return sb.join("");
+        };
+
         var scorm_activate_item = function(node) {
             if (!node) {
                 return;
@@ -178,10 +196,10 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
 
             var left = scorm_layout_widget.getUnitByPosition('left');
             var maxwidth = parseInt(YAHOO.util.Dom.getStyle('scorm_layout', 'width'));
-            left.set('maxWidth', (maxwidth - 10));
+            left.set('maxWidth', (maxwidth - 50));
             var cwidth = left.get('width');
-            if (cwidth > (maxwidth - 10)) {
-                left.set('width', (maxwidth - 10));
+            if (cwidth > (maxwidth - 1)) {
+                left.set('width', (maxwidth - 50));
             }
 
             scorm_layout_widget.setStyle('height', '100%');
@@ -189,7 +207,7 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
             center.setStyle('height', '100%');
 
             // calculate the rough new height
-            newheight = YAHOO.util.Dom.getViewportHeight() *.82;
+            newheight = YAHOO.util.Dom.getViewportHeight() -5;
             if (newheight < 600) {
                 newheight = 600;
             }
@@ -229,7 +247,7 @@ M.mod_scorm.init = function(Y, hide_nav, hide_toc, toc_title, window_name, launc
                     }
                 }
                 else {
-                    obj.style.width = (content.offsetWidth - 6)+'px';
+                    obj.style.width = (content.offsetWidth)+'px';
                     obj.style.height = (content.offsetHeight - 10)+'px';
                 }
             }

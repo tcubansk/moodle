@@ -43,7 +43,7 @@ $PAGE->set_url($currenturl);
 $attemptobj = quiz_attempt::create($attemptid);
 
 // Check login.
-require_login($attemptobj->get_courseid(), false, $attemptobj->get_cm());
+require_login($attemptobj->get_course(), false, $attemptobj->get_cm());
 $attemptobj->check_review_capability();
 
 $accessmanager = $attemptobj->get_access_manager(time());
@@ -59,7 +59,7 @@ if ($attemptobj->is_own_attempt()) {
         die();
     } else if (!$options->attempt) {
         echo $output->review_question_not_allowed(
-                $accessmanager->cannot_review_message($attemptobj->get_review_options()));
+                $attemptobj->cannot_review_message());
         die();
     }
 

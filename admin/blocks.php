@@ -98,34 +98,9 @@
             exit;
 
         } else {
-            // Inform block it's about to be deleted
-            if (file_exists("$CFG->dirroot/blocks/$block->name/block_$block->name.php")) {
-                $blockobject = block_instance($block->name);
-                if ($blockobject) {
-                    $blockobject->before_delete();  //only if we can create instance, block might have been already removed
-                }
-            }
+            uninstall_plugin('block', $block->name);
 
-            // First delete instances and then block
-            $instances = $DB->get_records('block_instances', array('blockname' => $block->name));
-            if(!empty($instances)) {
-                foreach($instances as $instance) {
-                    blocks_delete_instance($instance);
-                }
-            }
-
-            // Delete block
-            $DB->delete_records('block', array('id'=>$block->id));
-
-            drop_plugin_tables($block->name, "$CFG->dirroot/blocks/$block->name/db/install.xml", false); // old obsoleted table names
-            drop_plugin_tables('block_'.$block->name, "$CFG->dirroot/blocks/$block->name/db/install.xml", false);
-
-            // Delete the capabilities that were defined by this block
-            capabilities_cleanup('block/'.$block->name);
-
-            // Remove event handlers and dequeue pending events
-            events_uninstall('block/'.$block->name);
-
+            $a = new stdClass();
             $a->block = $strblockname;
             $a->directory = $CFG->dirroot.'/blocks/'.$block->name;
             notice(get_string('blockdeletefiles', '', $a), 'blocks.php');

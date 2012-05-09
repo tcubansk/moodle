@@ -247,10 +247,10 @@ class blog_entry {
 
             // First find and show the associated course
             foreach ($blogassociations as $assocrec) {
-                $contextrec = $DB->get_record('context', array('id' => $assocrec->contextid));
-                if ($contextrec->contextlevel ==  CONTEXT_COURSE) {
-                    $assocurl = new moodle_url('/course/view.php', array('id' => $contextrec->instanceid));
-                    $text = $DB->get_field('course', 'shortname', array('id' => $contextrec->instanceid)); //TODO: performance!!!!
+                $context = get_context_instance_by_id($assocrec->contextid);
+                if ($context->contextlevel ==  CONTEXT_COURSE) {
+                    $assocurl = new moodle_url('/course/view.php', array('id' => $context->instanceid));
+                    $text = $DB->get_field('course', 'shortname', array('id' => $context->instanceid)); //TODO: performance!!!!
                     $assocstr .= $OUTPUT->action_icon($assocurl, new pix_icon('i/course', $text), null, array(), true);
                     $hascourseassocs = true;
                     $assoctype = get_string('course');
@@ -259,15 +259,15 @@ class blog_entry {
 
             // Now show mod association
             foreach ($blogassociations as $assocrec) {
-                $contextrec = $DB->get_record('context', array('id' => $assocrec->contextid));
+                $context = get_context_instance_by_id($assocrec->contextid);
 
-                if ($contextrec->contextlevel ==  CONTEXT_MODULE) {
+                if ($context->contextlevel ==  CONTEXT_MODULE) {
                     if ($hascourseassocs) {
                         $assocstr .= ', ';
                         $hascourseassocs = false;
                     }
 
-                    $modinfo = $DB->get_record('course_modules', array('id' => $contextrec->instanceid));
+                    $modinfo = $DB->get_record('course_modules', array('id' => $context->instanceid));
                     $modname = $DB->get_field('modules', 'name', array('id' => $modinfo->module));
 
                     $assocurl = new moodle_url('/mod/'.$modname.'/view.php', array('id' => $modinfo->id));
@@ -292,9 +292,16 @@ class blog_entry {
 
         $contentcell->text .= $OUTPUT->container_start('commands');
 
-        if (blog_user_can_edit_entry($this) && empty($this->uniquehash)) {
-            $contentcell->text .= html_writer::link(new moodle_url('/blog/edit.php', array('action' => 'edit', 'entryid' => $this->id)), $stredit) . ' | ';
-            $contentcell->text .= html_writer::link(new moodle_url('/blog/edit.php', array('action' => 'delete', 'entryid' => $this->id)), $strdelete) . ' | ';
+        if (blog_user_can_edit_entry($this)) {
+            if (empty($this->uniquehash)) {
+                //External blog entries should not be edited
+                $contentcell->text .= html_writer::link(new moodle_url('/blog/edit.php',
+                                                        array('action' => 'edit', 'entryid' => $this->id)),
+                                                        $stredit) . ' | ';
+            }
+            $contentcell->text .= html_writer::link(new moodle_url('/blog/edit.php',
+                                                    array('action' => 'delete', 'entryid' => $this->id)),
+                                                    $strdelete) . ' | ';
         }
 
         $contentcell->text .= html_writer::link(new moodle_url('/blog/index.php', array('entryid' => $this->id)), get_string('permalink', 'blog'));
@@ -1132,13 +1139,13 @@ class blog_filter_entry extends blog_filter {
 }
 
 /**
- * This filter restricts the results to a time interval in seconds up to mktime()
+ * This filter restricts the results to a time interval in seconds up to time()
  */
 class blog_filter_since extends blog_filter {
     public function __construct($interval) {
         $this->conditions[] = 'p.lastmodified >= ? AND p.lastmodified <= ?';
-        $this->params[] = mktime() - $interval;
-        $this->params[] = mktime();
+        $this->params[] = time() - $interval;
+        $this->params[] = time();
     }
 }
 

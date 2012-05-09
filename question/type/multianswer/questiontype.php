@@ -36,9 +36,6 @@ require_once($CFG->dirroot . '/question/type/multichoice/question.php');
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class qtype_multianswer extends question_type {
-    public function requires_qtypes() {
-        return array('shortanswer', 'numerical', 'multichoice');
-    }
 
     public function can_analyse_responses() {
         return false;
@@ -193,7 +190,7 @@ class qtype_multianswer extends question_type {
         parent::delete_question($questionid, $contextid);
     }
 
-    protected function initialise_question_instance($question, $questiondata) {
+    protected function initialise_question_instance(question_definition $question, $questiondata) {
         parent::initialise_question_instance($question, $questiondata);
 
         $bits = preg_split('/\{#(\d+)\}/', $question->questiontext,
@@ -225,6 +222,16 @@ class qtype_multianswer extends question_type {
                     $subqdata->qtype)->get_random_guess_score($subqdata);
         }
         return $fractionsum / $fractionmax;
+    }
+
+    public function move_files($questionid, $oldcontextid, $newcontextid) {
+        parent::move_files($questionid, $oldcontextid, $newcontextid);
+        $this->move_files_in_hints($questionid, $oldcontextid, $newcontextid);
+    }
+
+    protected function delete_files($questionid, $contextid) {
+        parent::delete_files($questionid, $contextid);
+        $this->delete_files_in_hints($questionid, $contextid);
     }
 }
 
@@ -292,6 +299,7 @@ function qtype_multianswer_extract_question($text) {
     $question->generalfeedback['format'] = FORMAT_HTML;
     $question->generalfeedback['itemid'] = '';
 
+    $question->options = new stdClass();
     $question->options->questions = array();
     $question->defaultmark = 0; // Will be increased for each answer norm
 
@@ -407,7 +415,7 @@ function qtype_multianswer_extract_question($text) {
                     && preg_match('~'.NUMERICAL_ALTERNATIVE_REGEX.'~',
                             $altregs[ANSWER_ALTERNATIVE_REGEX_ANSWER], $numregs)) {
                 $wrapped->answer[] = $numregs[NUMERICAL_CORRECT_ANSWER];
-                if ($numregs[NUMERICAL_ABS_ERROR_MARGIN]) {
+                if (array_key_exists(NUMERICAL_ABS_ERROR_MARGIN, $numregs)) {
                     $wrapped->tolerance["$answerindex"] =
                     $numregs[NUMERICAL_ABS_ERROR_MARGIN];
                 } else {

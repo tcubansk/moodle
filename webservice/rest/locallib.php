@@ -1,5 +1,4 @@
 <?php
-
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -15,27 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+
 /**
  * REST web service implementation classes and methods.
  *
- * @package   webservice
- * @copyright 2009 Moodle Pty Ltd (http://moodle.com)
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @package    webservice_rest
+ * @copyright  2009 Jerome Mouneyrac
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 require_once("$CFG->dirroot/webservice/lib.php");
 
 /**
  * REST service server implementation.
- * @author Petr Skoda (skodak)
+ *
+ * @package    webservice_rest
+ * @copyright  2009 Petr Skoda (skodak)
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class webservice_rest_server extends webservice_base_server {
 
-    /** @property string $alt return method (XML / JSON) */
+    /** @var string return method ('xml' or 'json') */
     protected $restformat;
 
     /**
      * Contructor
+     *
+     * @param string $authmethod authentication method of the web service (WEBSERVICE_AUTHMETHOD_PERMANENT_TOKEN, ...)
+     * @param string $restformat Format of the return values: 'xml' or 'json'
      */
     public function __construct($authmethod, $restformat = 'xml') {
         parent::__construct($authmethod);
@@ -44,99 +50,115 @@ class webservice_rest_server extends webservice_base_server {
     }
 
     /**
-     * This method parses the $_REQUEST superglobal and looks for
+     * This method parses the $_POST and $_GET superglobals and looks for
      * the following information:
      *  1/ user authentication - username+password or token (wsusername, wspassword and wstoken parameters)
      *  2/ function name (wsfunction parameter)
      *  3/ function parameters (all other parameters except those above)
-     *
-     * @return void
      */
     protected function parse_request() {
+
+        //Get GET and POST paramters
+        $methodvariables = array_merge($_GET,$_POST);
+
         if ($this->authmethod == WEBSERVICE_AUTHMETHOD_USERNAME) {
-            $this->username = isset($_REQUEST['wsusername']) ? $_REQUEST['wsusername'] : null;
-            unset($_REQUEST['wsusername']);
+            $this->username = isset($methodvariables['wsusername']) ? $methodvariables['wsusername'] : null;
+            unset($methodvariables['wsusername']);
 
-            $this->password = isset($_REQUEST['wspassword']) ? $_REQUEST['wspassword'] : null;
-            unset($_REQUEST['wspassword']);
+            $this->password = isset($methodvariables['wspassword']) ? $methodvariables['wspassword'] : null;
+            unset($methodvariables['wspassword']);
 
-            $this->functionname = isset($_REQUEST['wsfunction']) ? $_REQUEST['wsfunction'] : null;
-            unset($_REQUEST['wsfunction']);
+            $this->functionname = isset($methodvariables['wsfunction']) ? $methodvariables['wsfunction'] : null;
+            unset($methodvariables['wsfunction']);
 
-            $this->parameters = $_REQUEST;
+            $this->parameters = $methodvariables;
 
         } else {
-            $this->token = isset($_REQUEST['wstoken']) ? $_REQUEST['wstoken'] : null;
-            unset($_REQUEST['wstoken']);
+            $this->token = isset($methodvariables['wstoken']) ? $methodvariables['wstoken'] : null;
+            unset($methodvariables['wstoken']);
 
-            $this->functionname = isset($_REQUEST['wsfunction']) ? $_REQUEST['wsfunction'] : null;
-            unset($_REQUEST['wsfunction']);
+            $this->functionname = isset($methodvariables['wsfunction']) ? $methodvariables['wsfunction'] : null;
+            unset($methodvariables['wsfunction']);
 
-            $this->parameters = $_REQUEST;
+            $this->parameters = $methodvariables;
         }
     }
 
     /**
      * Send the result of function call to the WS client
      * formatted as XML document.
-     * @return void
      */
     protected function send_response() {
-        $this->send_headers();
-        if ($this->restformat == 'json') {
-            try {
-                $response = external_api::clean_returnvalue($this->function->returns_desc, $this->returns);
-            } catch (Exception $ex) {
-                $error = new stdClass;
-                $error->exception = get_class($ex);
-                $error->message = $ex->getMessage();
-                if (debugging() and isset($ex->debuginfo)) {
-                    $error->debuginfo = $ex->debuginfo;
-                }
-                echo json_encode($error);
+
+        //Check that the returned values are valid
+        try {
+            if ($this->function->returns_desc != null) {
+                $validatedvalues = external_api::clean_returnvalue($this->function->returns_desc, $this->returns);
+            } else {
+                $validatedvalues = null;
             }
-            $json = json_encode($response);
-            echo $json;
-        } else {
-            $xml = '<?xml version="1.0" encoding="UTF-8" ?>'."\n";
-            $xml .= '<RESPONSE>'."\n";
-            $xml .= self::xmlize_result($this->returns, $this->function->returns_desc);
-            $xml .= '</RESPONSE>'."\n";
-            echo $xml;
+        } catch (Exception $ex) {
+            $exception = $ex;
         }
+
+        if (!empty($exception)) {
+            $response =  $this->generate_error($exception);
+        } else {
+            //We can now convert the response to the requested REST format
+            if ($this->restformat == 'json') {
+                $response = json_encode($validatedvalues);
+            } else {
+                $response = '<?xml version="1.0" encoding="UTF-8" ?>'."\n";
+                $response .= '<RESPONSE>'."\n";
+                $response .= self::xmlize_result($this->returns, $this->function->returns_desc);
+                $response .= '</RESPONSE>'."\n";
+            }
+        }
+
+        $this->send_headers();
+        echo $response;
     }
 
     /**
      * Send the error information to the WS client
      * formatted as XML document.
-     * @param exception $ex
-     * @return void
+     * Note: the exception is never passed as null,
+     *       it only matches the abstract function declaration.
+     * @param exception $ex the exception that we are sending
      */
     protected function send_error($ex=null) {
         $this->send_headers();
+        echo $this->generate_error($ex);
+    }
+
+    /**
+     * Build the error information matching the REST returned value format (JSON or XML)
+     * @param exception $ex the exception we are converting in the server rest format
+     * @return string the error in the requested REST format
+     */
+    protected function generate_error($ex) {
         if ($this->restformat == 'json') {
-            $error = new stdClass;
-            $error->exception = get_class($ex);
-            $error->message = $ex->getMessage();
+            $errorobject = new stdClass;
+            $errorobject->exception = get_class($ex);
+            $errorobject->message = $ex->getMessage();
             if (debugging() and isset($ex->debuginfo)) {
-                $error->debuginfo = $ex->debuginfo;
+                $errorobject->debuginfo = $ex->debuginfo;
             }
-            echo json_encode($error);
+            $error = json_encode($errorobject);
         } else {
-            $xml = '<?xml version="1.0" encoding="UTF-8" ?>'."\n";
-            $xml .= '<EXCEPTION class="'.get_class($ex).'">'."\n";
-            $xml .= '<MESSAGE>'.htmlentities($ex->getMessage(), ENT_COMPAT, 'UTF-8').'</MESSAGE>'."\n";
+            $error = '<?xml version="1.0" encoding="UTF-8" ?>'."\n";
+            $error .= '<EXCEPTION class="'.get_class($ex).'">'."\n";
+            $error .= '<MESSAGE>'.htmlspecialchars($ex->getMessage(), ENT_COMPAT, 'UTF-8').'</MESSAGE>'."\n";
             if (debugging() and isset($ex->debuginfo)) {
-                $xml .= '<DEBUGINFO>'.htmlentities($ex->debuginfo, ENT_COMPAT, 'UTF-8').'</DEBUGINFO>'."\n";
+                $error .= '<DEBUGINFO>'.htmlspecialchars($ex->debuginfo, ENT_COMPAT, 'UTF-8').'</DEBUGINFO>'."\n";
             }
-            $xml .= '</EXCEPTION>'."\n";
-            echo $xml;
+            $error .= '</EXCEPTION>'."\n";
         }
+        return $error;
     }
 
     /**
      * Internal implementation - sending of page headers.
-     * @return void
      */
     protected function send_headers() {
         if ($this->restformat == 'json') {
@@ -153,9 +175,10 @@ class webservice_rest_server extends webservice_base_server {
 
     /**
      * Internal implementation - recursive function producing XML markup.
-     * @param mixed $returns
-     * @param $desc
-     * @return unknown_type
+     *
+     * @param mixed $returns the returned values
+     * @param external_description $desc
+     * @return string
      */
     protected static function xmlize_result($returns, $desc) {
         if ($desc === null) {
@@ -169,7 +192,7 @@ class webservice_rest_server extends webservice_base_server {
             if (is_null($returns)) {
                 return '<VALUE null="null"/>'."\n";
             } else {
-                return '<VALUE>'.htmlentities($returns, ENT_COMPAT, 'UTF-8').'</VALUE>'."\n";
+                return '<VALUE>'.htmlspecialchars($returns, ENT_COMPAT, 'UTF-8').'</VALUE>'."\n";
             }
 
         } else if ($desc instanceof external_multiple_structure) {
@@ -185,15 +208,6 @@ class webservice_rest_server extends webservice_base_server {
         } else if ($desc instanceof external_single_structure) {
             $single = '<SINGLE>'."\n";
             foreach ($desc->keys as $key=>$subdesc) {
-                if (!array_key_exists($key, $returns)) {
-                    if ($subdesc->required == VALUE_REQUIRED) {
-                        $single .= '<ERROR>Missing required key "'.$key.'"</ERROR>';
-                        continue;
-                    } else {
-                        //optional field
-                        continue;
-                    }
-                }
                 $single .= '<KEY name="'.$key.'">'.self::xmlize_result($returns[$key], $subdesc).'</KEY>'."\n";
             }
             $single .= '</SINGLE>'."\n";
@@ -205,13 +219,17 @@ class webservice_rest_server extends webservice_base_server {
 
 /**
  * REST test client class
+ *
+ * @package    webservice_rest
+ * @copyright  2009 Petr Skoda (skodak)
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class webservice_rest_test_client implements webservice_test_client_interface {
     /**
      * Execute test client WS request
-     * @param string $serverurl
-     * @param string $function
-     * @param array $params
+     * @param string $serverurl server url (including token parameter or username/password parameters)
+     * @param string $function function name
+     * @param array $params parameters of the called function
      * @return mixed
      */
     public function simpletest($serverurl, $function, $params) {

@@ -16,15 +16,16 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * @package moodlecore
- * @subpackage backup-moodle2
- * @copyright 2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * Defines various backup steps that will be used by common tasks in backup
+ *
+ * @package     core_backup
+ * @subpackage  moodle2
+ * @category    backup
+ * @copyright   2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-/**
- * Define all the backup steps that will be used by common tasks in backup
- */
+defined('MOODLE_INTERNAL') || die();
 
 /**
  * create the temp dir where backup/restore will happen,
@@ -98,6 +99,7 @@ abstract class backup_activity_structure_step extends backup_structure_step {
      *                                       we are going to add subplugin information to
      * @param bool $multiple to define if multiple subplugins can produce information
      *                       for each instance of $element (true) or no (false)
+     * @return void
      */
     protected function add_subplugin_structure($subplugintype, $element, $multiple) {
 
@@ -135,6 +137,8 @@ abstract class backup_activity_structure_step extends backup_structure_step {
     /**
      * As far as activity backup steps are implementing backup_subplugin stuff, they need to
      * have the parent task available for wrapping purposes (get course/context....)
+     *
+     * @return backup_activity_task
      */
     public function get_task() {
         return $this->task;
@@ -143,6 +147,9 @@ abstract class backup_activity_structure_step extends backup_structure_step {
     /**
      * Wraps any activity backup structure within the common 'activity' element
      * that will include common to all activities information like id, context...
+     *
+     * @param backup_nested_element $activitystructure the element to wrap
+     * @return backup_nested_element the $activitystructure wrapped by the common 'activity' element
      */
     protected function prepare_activity_structure($activitystructure) {
 
@@ -390,13 +397,13 @@ class backup_course_structure_step extends backup_structure_step {
 
         $course = new backup_nested_element('course', array('id', 'contextid'), array(
             'shortname', 'fullname', 'idnumber',
-            'summary', 'summaryformat', 'format', 'showgrades',
+            'summary', 'summaryformat', 'format', 'coursedisplay', 'showgrades',
             'newsitems', 'startdate', 'numsections',
             'marker', 'maxbytes', 'legacyfiles', 'showreports',
             'visible', 'hiddensections', 'groupmode', 'groupmodeforce',
             'defaultgroupingid', 'lang', 'theme',
             'timecreated', 'timemodified',
-            'requested', 'restrictmodules',
+            'requested',
             'enablecompletion', 'completionstartonenrol', 'completionnotify'));
 
         $category = new backup_nested_element('category', array('id'), array(
@@ -407,16 +414,16 @@ class backup_course_structure_step extends backup_structure_step {
         $tag = new backup_nested_element('tag', array('id'), array(
             'name', 'rawname'));
 
-        $allowedmodules = new backup_nested_element('allowed_modules');
-
-        $module = new backup_nested_element('module', array(), array('modulename'));
-
         // attach format plugin structure to $course element, only one allowed
         $this->add_plugin_structure('format', $course, false);
 
         // attach theme plugin structure to $course element; multiple themes can
         // save course data (in case of user theme, legacy theme, etc)
         $this->add_plugin_structure('theme', $course, true);
+
+        // attach general report plugin structure to $course element; multiple
+        // reports can save course data if required
+        $this->add_plugin_structure('report', $course, true);
 
         // attach course report plugin structure to $course element; multiple
         // course reports can save course data if required
@@ -432,9 +439,6 @@ class backup_course_structure_step extends backup_structure_step {
 
         $course->add_child($tags);
         $tags->add_child($tag);
-
-        $course->add_child($allowedmodules);
-        $allowedmodules->add_child($module);
 
         // Set the sources
 
@@ -454,11 +458,6 @@ class backup_course_structure_step extends backup_structure_step {
                                  AND ti.itemid = ?', array(
                                      backup_helper::is_sqlparam('course'),
                                      backup::VAR_PARENTID));
-
-        $module->set_source_sql('SELECT m.name AS modulename
-                                   FROM {modules} m
-                                   JOIN {course_allowed_modules} cam ON m.id = cam.module
-                                  WHERE course = ?', array(backup::VAR_COURSEID));
 
         // Some annotations
 
@@ -764,6 +763,48 @@ class backup_comments_structure_step extends backup_structure_step {
 }
 
 /**
+ * structure step in charge of constructing the calender.xml file for all the events found
+ * in a given context
+ */
+class backup_calendarevents_structure_step extends backup_structure_step {
+
+    protected function define_structure() {
+
+        // Define each element separated
+
+        $events = new backup_nested_element('events');
+
+        $event = new backup_nested_element('event', array('id'), array(
+                'name', 'description', 'format', 'courseid', 'groupid', 'userid',
+                'repeatid', 'modulename', 'instance', 'eventtype', 'timestart',
+                'timeduration', 'visible', 'uuid', 'sequence', 'timemodified'));
+
+        // Build the tree
+        $events->add_child($event);
+
+        // Define sources
+        if ($this->name == 'course_calendar') {
+            $calendar_items_sql ="SELECT * FROM {event}
+                        WHERE courseid = :courseid
+                        AND (eventtype = 'course' OR eventtype = 'group')";
+            $calendar_items_params = array('courseid'=>backup::VAR_COURSEID);
+            $event->set_source_sql($calendar_items_sql, $calendar_items_params);
+        } else {
+            $event->set_source_table('event', array('courseid' => backup::VAR_COURSEID, 'instance' => backup::VAR_ACTIVITYID, 'modulename' => backup::VAR_MODNAME));
+        }
+
+        // Define id annotations
+
+        $event->annotate_ids('user', 'userid');
+        $event->annotate_ids('group', 'groupid');
+        $event->annotate_files('calendar', 'event_description', 'id');
+
+        // Return the root element (events)
+        return $events;
+    }
+}
+
+/**
  * structure step in charge of constructing the gradebook.xml file for all the gradebook config in the course
  * NOTE: the backup of the grade items themselves is handled by backup_activity_grades_structure_step
  */
@@ -809,7 +850,7 @@ class backup_gradebook_structure_step extends backup_structure_step {
         //grade_categories
         $grade_categories = new backup_nested_element('grade_categories');
         $grade_category   = new backup_nested_element('grade_category', array('id'), array(
-                //'courseid', 
+                //'courseid',
                 'parent', 'depth', 'path', 'fullname', 'aggregation', 'keephigh',
                 'dropload', 'aggregateonlygraded', 'aggregateoutcomes', 'aggregatesubcats',
                 'timecreated', 'timemodified', 'hidden'));
@@ -1110,14 +1151,12 @@ class backup_users_structure_step extends backup_structure_step {
         $user->set_source_sql('SELECT u.*, c.id AS contextid, m.wwwroot AS mnethosturl
                                  FROM {user} u
                                  JOIN {backup_ids_temp} bi ON bi.itemid = u.id
-                                 JOIN {context} c ON c.instanceid = u.id
+                            LEFT JOIN {context} c ON c.instanceid = u.id AND c.contextlevel = ' . CONTEXT_USER . '
                             LEFT JOIN {mnet_host} m ON m.id = u.mnethostid
                                 WHERE bi.backupid = ?
-                                  AND bi.itemname = ?
-                                  AND c.contextlevel = ?', array(
+                                  AND bi.itemname = ?', array(
                                       backup_helper::is_sqlparam($this->get_backupid()),
-                                      backup_helper::is_sqlparam('userfinal'),
-                                      backup_helper::is_sqlparam(CONTEXT_USER)));
+                                      backup_helper::is_sqlparam('userfinal')));
 
         // All the rest on information is only added if we arent
         // in an anonymized backup
@@ -1759,26 +1798,96 @@ class backup_annotate_all_user_files extends backup_execution_step {
         // List of fileareas we are going to annotate
         $fileareas = array('profile', 'icon');
 
-        if ($this->get_setting_value('user_files')) { // private files only if enabled in settings
-            $fileareas[] = 'private';
-        }
-
         // Fetch all annotated (final) users
         $rs = $DB->get_recordset('backup_ids_temp', array(
             'backupid' => $this->get_backupid(), 'itemname' => 'userfinal'));
         foreach ($rs as $record) {
             $userid = $record->itemid;
-            $userctxid = get_context_instance(CONTEXT_USER, $userid)->id;
+            $userctx = get_context_instance(CONTEXT_USER, $userid);
+            if (!$userctx) {
+                continue; // User has not context, sure it's a deleted user, so cannot have files
+            }
             // Proceed with every user filearea
             foreach ($fileareas as $filearea) {
                 // We don't need to specify itemid ($userid - 5th param) as far as by
                 // context we can get all the associated files. See MDL-22092
-                backup_structure_dbops::annotate_files($this->get_backupid(), $userctxid, 'user', $filearea, null);
+                backup_structure_dbops::annotate_files($this->get_backupid(), $userctx->id, 'user', $filearea, null);
             }
         }
         $rs->close();
     }
 }
+
+
+/**
+ * Defines the backup step for advanced grading methods attached to the activity module
+ */
+class backup_activity_grading_structure_step extends backup_structure_step {
+
+    /**
+     * Include the grading.xml only if the module supports advanced grading
+     */
+    protected function execute_condition() {
+        return plugin_supports('mod', $this->get_task()->get_modulename(), FEATURE_ADVANCED_GRADING, false);
+    }
+
+    /**
+     * Declares the gradable areas structures and data sources
+     */
+    protected function define_structure() {
+
+        // To know if we are including userinfo
+        $userinfo = $this->get_setting_value('userinfo');
+
+        // Define the elements
+
+        $areas = new backup_nested_element('areas');
+
+        $area = new backup_nested_element('area', array('id'), array(
+            'areaname', 'activemethod'));
+
+        $definitions = new backup_nested_element('definitions');
+
+        $definition = new backup_nested_element('definition', array('id'), array(
+            'method', 'name', 'description', 'descriptionformat', 'status',
+            'timecreated', 'timemodified', 'options'));
+
+        $instances = new backup_nested_element('instances');
+
+        $instance = new backup_nested_element('instance', array('id'), array(
+            'raterid', 'itemid', 'rawgrade', 'status', 'feedback',
+            'feedbackformat', 'timemodified'));
+
+        // Build the tree including the method specific structures
+        // (beware - the order of how gradingform plugins structures are attached is important)
+        $areas->add_child($area);
+        $area->add_child($definitions);
+        $definitions->add_child($definition);
+        $this->add_plugin_structure('gradingform', $definition, true);
+        $definition->add_child($instances);
+        $instances->add_child($instance);
+        $this->add_plugin_structure('gradingform', $instance, false);
+
+        // Define data sources
+
+        $area->set_source_table('grading_areas', array('contextid' => backup::VAR_CONTEXTID,
+            'component' => array('sqlparam' => 'mod_'.$this->get_task()->get_modulename())));
+
+        $definition->set_source_table('grading_definitions', array('areaid' => backup::VAR_PARENTID));
+
+        if ($userinfo) {
+            $instance->set_source_table('grading_instances', array('definitionid' => backup::VAR_PARENTID));
+        }
+
+        // Annotate references
+        $definition->annotate_files('grading', 'description', 'id');
+        $instance->annotate_ids('user', 'raterid');
+
+        // Return the root element
+        return $areas;
+    }
+}
+
 
 /**
  * structure step in charge of constructing the grades.xml file for all the grade items

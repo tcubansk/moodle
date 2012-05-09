@@ -39,7 +39,7 @@ $THEME->name = 'formal_white';
 ////////////////////////////////////////////////////
 
 
-$THEME->parents = array('base','canvas');
+$THEME->parents = array('canvas','base');
 /////////////////////////////////////////////////////
 // Which existing theme(s) in the /theme/ directory
 // do you want this theme to extend. A theme can
@@ -53,7 +53,6 @@ $THEME->parents = array('base','canvas');
 
 $THEME->parents_exclude_sheets = array(
     'canvas'=>array(
-        'core',
         'pagelayout',
         'tabs',
         'tables',
@@ -68,7 +67,7 @@ $THEME->parents_exclude_sheets = array(
 $THEME->sheets = array('frame'     ,'menu', 'course',
                        'pagelayout','core', 'calendar',
                        'tabs'      ,'quiz', 'forum',
-                       'formal_white');
+                       'block'     ,'formal_white');
 ////////////////////////////////////////////////////
 // Name of the stylesheet(s) you've including in
 // this theme's /styles/ directory.
@@ -175,7 +174,7 @@ $THEME->layouts = array(
         'options' => array('nofooter'=>true, 'nonavbar'=>false, 'noblocks'=>true),
     ),
     'report' => array(
-        'file' => 'general.php',
+        'file' => 'report.php',
         'regions' => array('side-pre'),
         'defaultregion' => 'side-pre',
     ),

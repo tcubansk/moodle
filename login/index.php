@@ -113,7 +113,7 @@ if ($user !== false or $frm !== false or $errormsg !== '') {
 
 if ($frm and isset($frm->username)) {                             // Login WITH cookies
 
-    $frm->username = trim(moodle_strtolower($frm->username));
+    $frm->username = trim(textlib::strtolower($frm->username));
 
     if (is_enabled_auth('none') ) {
         if ($frm->username !== clean_param($frm->username, PARAM_USERNAME)) {
@@ -298,6 +298,10 @@ if (!empty($CFG->alternateloginurl)) {
 $PAGE->verify_https_required();
 
 /// Generate the login page with forms
+
+if (!isset($frm) or !is_object($frm)) {
+    $frm = new stdClass();
+}
 
 if (empty($frm->username) && $authsequence[0] != 'shibboleth') {  // See bug 5184
     if (!empty($_GET["username"])) {

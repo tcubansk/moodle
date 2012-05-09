@@ -18,8 +18,7 @@
 /**
  * Strings for component 'workshopform_accumulative', language 'en', branch 'MOODLE_20_STABLE'
  *
- * @package    workshopform
- * @subpackage accumulative
+ * @package    workshopform_accumulative
  * @copyright  2009 David Mudrak <david@moodle.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -36,6 +35,7 @@ $string['dimensionweight'] = 'Weight';
 $string['excellent'] = 'Excellent';
 $string['good'] = 'Good';
 $string['incorrect'] = 'Incorrect';
+$string['mustchoosegrade'] = 'You have to select a grade for this aspect';
 $string['pluginname'] = 'Accumulative grading';
 $string['poor'] = 'Poor';
 $string['present'] = 'Present';

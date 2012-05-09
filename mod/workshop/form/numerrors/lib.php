@@ -18,8 +18,7 @@
 /**
  * This file defines a class with "Number of errors" grading strategy logic
  *
- * @package    workshopform
- * @subpackage numerrors
+ * @package    workshopform_numerrors
  * @copyright  2009 David Mudrak <david.mudrak@gmail.com>
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
@@ -29,7 +28,20 @@ defined('MOODLE_INTERNAL') || die();
 require_once(dirname(dirname(__FILE__)) . '/lib.php');  // interface definition
 require_once($CFG->libdir . '/gradelib.php');           // to handle float vs decimal issues
 
-function workshopform_numerrors_pluginfile($course, $cm, $context, $filearea, array $args, $forcedownload) {
+/**
+ * Server workshop files
+ *
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
+ * @return bool
+ */
+function workshopform_numerrors_pluginfile($course, $cm, $context, $filearea, array $args, $forcedownload, array $options=array()) {
     global $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -61,7 +73,7 @@ function workshopform_numerrors_pluginfile($course, $cm, $context, $filearea, ar
     }
 
     // finally send the file
-    send_stored_file($file);
+    send_stored_file($file, 0, 0, $forcedownload, $options);
 }
 
 /**
@@ -252,7 +264,7 @@ class workshop_numerrors_strategy implements workshop_strategy {
                 $dimid = $fields->{'dimensionid__idx_'.$i};
                 if (isset($grades[$dimid])) {
                     $current->{'gradeid__idx_'.$i}      = $grades[$dimid]->id;
-                    $current->{'grade__idx_'.$i}        = $grades[$dimid]->grade;
+                    $current->{'grade__idx_'.$i}        = ($grades[$dimid]->grade == 0 ? -1 : 1);
                     $current->{'peercomment__idx_'.$i}  = $grades[$dimid]->peercomment;
                 }
             }
@@ -294,7 +306,7 @@ class workshop_numerrors_strategy implements workshop_strategy {
             $grade->assessmentid        = $assessment->id;
             $grade->strategy            = 'numerrors';
             $grade->dimensionid         = $data->{'dimensionid__idx_' . $i};
-            $grade->grade               = $data->{'grade__idx_' . $i};
+            $grade->grade               = ($data->{'grade__idx_' . $i} <= 0 ? 0 : 1);
             $grade->peercomment         = $data->{'peercomment__idx_' . $i};
             $grade->peercommentformat   = FORMAT_HTML;
             if (empty($grade->id)) {

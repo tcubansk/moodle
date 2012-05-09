@@ -1,5 +1,4 @@
 <?php
-
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -15,23 +14,35 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+
 /**
  * External files API
  *
- * @package    moodlecore
- * @subpackage webservice
- * @copyright  2010 Dongsheng Cai <dongsheng@moodle.com>
+ * @package    core_files
+ * @category   external
+ * @copyright  2010 Dongsheng Cai
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 require_once("$CFG->libdir/externallib.php");
 require_once("$CFG->libdir/filelib.php");
 
-class moodle_file_external extends external_api {
+/**
+ * Files external functions
+ *
+ * @package    core_files
+ * @category   external
+ * @copyright  2011 Jerome Mouneyrac
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @since Moodle 2.2
+ */
+class core_files_external extends external_api {
 
     /**
      * Returns description of get_files parameters
+     *
      * @return external_function_parameters
+     * @since Moodle 2.2
      */
     public static function get_files_parameters() {
         return new external_function_parameters(
@@ -48,13 +59,15 @@ class moodle_file_external extends external_api {
 
     /**
      * Return moodle files listing
-     * @param int $contextid
-     * @param int $component
-     * @param int $filearea
-     * @param int $itemid
-     * @param string $filepath
-     * @param string $filename
+     *
+     * @param int $contextid context id
+     * @param int $component component
+     * @param int $filearea file aera
+     * @param int $itemid item id
+     * @param string $filepath file path
+     * @param string $filename file name
      * @return array
+     * @since Moodle 2.2
      */
     public static function get_files($contextid, $component, $filearea, $itemid, $filepath, $filename) {
         global $CFG, $USER, $OUTPUT;
@@ -133,7 +146,9 @@ class moodle_file_external extends external_api {
 
     /**
      * Returns description of get_files returns
-     * @return external_multiple_structure
+     *
+     * @return external_single_structure
+     * @since Moodle 2.2
      */
     public static function get_files_returns() {
         return new external_single_structure(
@@ -170,7 +185,9 @@ class moodle_file_external extends external_api {
 
     /**
      * Returns description of upload parameters
+     *
      * @return external_function_parameters
+     * @since Moodle 2.2
      */
     public static function upload_parameters() {
         return new external_function_parameters(
@@ -189,14 +206,15 @@ class moodle_file_external extends external_api {
     /**
      * Uploading a file to moodle
      *
-     * @param int $contextid
-     * @param string $component
-     * @param string $filearea
-     * @param int $itemid
-     * @param string $filepath
-     * @param string $filename
-     * @param string $filecontent
+     * @param int $contextid context id
+     * @param string $component component
+     * @param string $filearea file aera
+     * @param int $itemid item id
+     * @param string $filepath file path
+     * @param string $filename file name
+     * @param string $filecontent file content
      * @return array
+     * @since Moodle 2.2
      */
     public static function upload($contextid, $component, $filearea, $itemid, $filepath, $filename, $filecontent) {
         global $USER, $CFG;
@@ -232,7 +250,7 @@ class moodle_file_external extends external_api {
         }
 
         if (isset($fileinfo['itemid'])) {
-            // TODO: in user private area, itemid is always 0
+            // TODO MDL-31116 in user private area, itemid is always 0
             $itemid = 0;
         } else {
             throw new coding_exception('itemid cannot be empty');
@@ -247,7 +265,7 @@ class moodle_file_external extends external_api {
         if (!($fileinfo['component'] == 'user' and $fileinfo['filearea'] == 'private')) {
             throw new coding_exception('File can be uploaded to user private area only');
         } else {
-            // TODO: hard-coded to use user_private area
+            // TODO MDL-31116 hard-coded to use user_private area
             $component = 'user';
             $filearea = 'private';
         }
@@ -280,7 +298,9 @@ class moodle_file_external extends external_api {
 
     /**
      * Returns description of upload returns
-     * @return external_multiple_structure
+     *
+     * @return external_single_structure
+     * @since Moodle 2.2
      */
     public static function upload_returns() {
         return new external_single_structure(
@@ -294,5 +314,110 @@ class moodle_file_external extends external_api {
                  'url'      => new external_value(PARAM_TEXT, ''),
              )
         );
+    }
+}
+
+/**
+ * Deprecated files external functions
+ *
+ * @package    core_files
+ * @copyright  2010 Dongsheng Cai
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @since Moodle 2.0
+ * @deprecated Moodle 2.2 MDL-29106 - Please do not use this class any more.
+ * @todo MDL-31194 This will be deleted in Moodle 2.5.
+ * @see core_files_external
+ */
+class moodle_file_external extends external_api {
+
+    /**
+     * Returns description of get_files parameters
+     *
+     * @return external_function_parameters
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::get_files_parameters()
+     */
+    public static function get_files_parameters() {
+        return core_files_external::get_files_parameters();
+    }
+
+    /**
+     * Return moodle files listing
+     *
+     * @param int $contextid
+     * @param int $component
+     * @param int $filearea
+     * @param int $itemid
+     * @param string $filepath
+     * @param string $filename
+     * @return array
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::get_files()
+     */
+    public static function get_files($contextid, $component, $filearea, $itemid, $filepath, $filename) {
+        return core_files_external::get_files($contextid, $component, $filearea, $itemid, $filepath, $filename);
+    }
+
+    /**
+     * Returns description of get_files returns
+     *
+     * @return external_single_structure
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::get_files_returns()
+     */
+    public static function get_files_returns() {
+        return core_files_external::get_files_returns();
+    }
+
+    /**
+     * Returns description of upload parameters
+     *
+     * @return external_function_parameters
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::upload_parameters()
+     */
+    public static function upload_parameters() {
+        return core_files_external::upload_parameters();
+    }
+
+    /**
+     * Uploading a file to moodle
+     *
+     * @param int $contextid
+     * @param string $component
+     * @param string $filearea
+     * @param int $itemid
+     * @param string $filepath
+     * @param string $filename
+     * @param string $filecontent
+     * @return array
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::upload()
+     */
+    public static function upload($contextid, $component, $filearea, $itemid, $filepath, $filename, $filecontent) {
+        return core_files_external::upload($contextid, $component, $filearea, $itemid, $filepath, $filename, $filecontent);
+    }
+
+    /**
+     * Returns description of upload returns
+     *
+     * @return external_single_structure
+     * @since Moodle 2.0
+     * @deprecated Moodle 2.2 MDL-29106 - Please do not call this function any more.
+     * @todo MDL-31194 This will be deleted in Moodle 2.5.
+     * @see core_files_external::upload_returns()
+     */
+    public static function upload_returns() {
+        return core_files_external::upload_returns();
     }
 }

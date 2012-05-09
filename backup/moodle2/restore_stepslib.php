@@ -16,15 +16,16 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * @package moodlecore
- * @subpackage backup-moodle2
- * @copyright 2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * Defines various restore steps that will be used by common tasks in restore
+ *
+ * @package     core_backup
+ * @subpackage  moodle2
+ * @category    backup
+ * @copyright   2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-/**
- * Define all the restore steps that will be used by common tasks in restore
- */
+defined('MOODLE_INTERNAL') || die();
 
 /**
  * delete old directories and conditionally create backup_temp_ids table
@@ -371,40 +372,35 @@ class restore_gradebook_structure_step extends restore_structure_step {
         }
         $rs->close();
 
-        //need to correct the grade category path and parent
+        // Need to correct the grade category path and parent
         $conditions = array(
             'courseid' => $this->get_courseid()
         );
-        $grade_category = new stdclass();
 
         $rs = $DB->get_recordset('grade_categories', $conditions);
-        if (!empty($rs)) {
-            //get all the parents correct first as grade_category::build_path() loads category parents from the DB
-            foreach($rs as $gc) {
-                if (!empty($gc->parent)) {
-                    $grade_category->id = $gc->id;
-                    $grade_category->parent = $this->get_mappingid('grade_category', $gc->parent);
-                    $DB->update_record('grade_categories', $grade_category);
-                }
-            }
-        }
-        if (isset($grade_category->parent)) {
-            unset($grade_category->parent);
-        }
-        $rs->close();
-
-        $rs = $DB->get_recordset('grade_categories', $conditions);
-        if (!empty($rs)) {
-            //now we can rebuild all the paths
-            foreach($rs as $gc) {
+        // Get all the parents correct first as grade_category::build_path() loads category parents from the DB
+        foreach ($rs as $gc) {
+            if (!empty($gc->parent)) {
+                $grade_category = new stdClass();
                 $grade_category->id = $gc->id;
-                $grade_category->path = grade_category::build_path($gc);
+                $grade_category->parent = $this->get_mappingid('grade_category', $gc->parent);
                 $DB->update_record('grade_categories', $grade_category);
             }
         }
         $rs->close();
 
-        //Restore marks items as needing update. Update everything now.
+        // Now we can rebuild all the paths
+        $rs = $DB->get_recordset('grade_categories', $conditions);
+        foreach ($rs as $gc) {
+            $grade_category = new stdClass();
+            $grade_category->id = $gc->id;
+            $grade_category->path = grade_category::build_path($gc);
+            $grade_category->depth = substr_count($grade_category->path, '/') - 1;
+            $DB->update_record('grade_categories', $grade_category);
+        }
+        $rs->close();
+
+        // Restore marks items as needing update. Update everything now.
         grade_regrade_final_grades($this->get_courseid());
     }
 }
@@ -688,7 +684,7 @@ class restore_create_included_users extends restore_execution_step {
 
     protected function define_execution() {
 
-        restore_dbops::create_included_users($this->get_basepath(), $this->get_restoreid(), $this->get_setting_value('user_files'), $this->task->get_userid());
+        restore_dbops::create_included_users($this->get_basepath(), $this->get_restoreid(), $this->task->get_userid());
     }
 }
 
@@ -802,7 +798,14 @@ class restore_groups_structure_step extends restore_structure_step {
 
         $data->groupingid = $this->get_new_parentid('grouping'); // Use new parentid
         $data->groupid    = $this->get_mappingid('group', $data->groupid); // Get from mappings
-        $DB->insert_record('groupings_groups', $data);  // No need to set this mapping (no child info nor files)
+
+        $params = array();
+        $params['groupingid'] = $data->groupingid;
+        $params['groupid']    = $data->groupid;
+
+        if (!$DB->record_exists('groupings_groups', $params)) {
+            $DB->insert_record('groupings_groups', $data);  // No need to set this mapping (no child info nor files)
+        }
     }
 
     protected function after_execute() {
@@ -1066,6 +1069,21 @@ class restore_section_structure_step extends restore_structure_step {
  * the course record (never inserting)
  */
 class restore_course_structure_step extends restore_structure_step {
+    /**
+     * @var bool this gets set to true by {@link process_course()} if we are
+     * restoring an old coures that used the legacy 'module security' feature.
+     * If so, we have to do more work in {@link after_execute()}.
+     */
+    protected $legacyrestrictmodules = false;
+
+    /**
+     * @var array Used when {@link $legacyrestrictmodules} is true. This is an
+     * array with array keys the module names ('forum', 'quiz', etc.). These are
+     * the modules that are allowed according to the data in the backup file.
+     * In {@link after_execute()} we then have to prevent adding of all the other
+     * types of activity.
+     */
+    protected $legacyallowedmodules = array();
 
     protected function define_structure() {
 
@@ -1079,6 +1097,9 @@ class restore_course_structure_step extends restore_structure_step {
 
         // Apply for 'theme' plugins optional paths at course level
         $this->add_plugin_structure('theme', $course);
+
+        // Apply for 'report' plugins optional paths at course level
+        $this->add_plugin_structure('report', $course);
 
         // Apply for 'course report' plugins optional paths at course level
         $this->add_plugin_structure('coursereport', $course);
@@ -1099,7 +1120,6 @@ class restore_course_structure_step extends restore_structure_step {
         global $CFG, $DB;
 
         $data = (object)$data;
-        $oldid = $data->id; // We'll need this later
 
         $fullname  = $this->get_setting_value('course_fullname');
         $shortname = $this->get_setting_value('course_shortname');
@@ -1112,10 +1132,23 @@ class restore_course_structure_step extends restore_structure_step {
         $data->id = $this->get_courseid();
         $data->fullname = $fullname;
         $data->shortname= $shortname;
-        $data->idnumber = '';
 
-        // Only restrict modules if original course was and target site too for new courses
-        $data->restrictmodules = $data->restrictmodules && !empty($CFG->restrictmodulesfor) && $CFG->restrictmodulesfor == 'all';
+        $context = get_context_instance_by_id($this->task->get_contextid());
+        if (has_capability('moodle/course:changeidnumber', $context, $this->task->get_userid())) {
+            $data->idnumber = '';
+        } else {
+            unset($data->idnumber);
+        }
+
+        // Any empty value for course->hiddensections will lead to 0 (default, show collapsed).
+        // It has been reported that some old 1.9 courses may have it null leading to DB error. MDL-31532
+        if (empty($data->hiddensections)) {
+            $data->hiddensections = 0;
+        }
+
+        // Set legacyrestrictmodules to true if the course was resticting modules. If so
+        // then we will need to process restricted modules after execution.
+        $this->legacyrestrictmodules = !empty($data->restrictmodules);
 
         $data->startdate= $this->apply_date_offset($data->startdate);
         if ($data->defaultgroupingid) {
@@ -1170,31 +1203,44 @@ class restore_course_structure_step extends restore_structure_step {
     }
 
     public function process_allowed_module($data) {
-        global $CFG, $DB;
-
         $data = (object)$data;
 
-        // only if enabled by admin setting
-        if (!empty($CFG->restrictmodulesfor) && $CFG->restrictmodulesfor == 'all') {
-            $available = get_plugin_list('mod');
-            $mname = $data->modulename;
-            if (array_key_exists($mname, $available)) {
-                if ($module = $DB->get_record('modules', array('name' => $mname, 'visible' => 1))) {
-                    $rec = new stdclass();
-                    $rec->course = $this->get_courseid();
-                    $rec->module = $module->id;
-                    if (!$DB->record_exists('course_allowed_modules', (array)$rec)) {
-                        $DB->insert_record('course_allowed_modules', $rec);
-                    }
-                }
-            }
+        // Backwards compatiblity support for the data that used to be in the
+        // course_allowed_modules table.
+        if ($this->legacyrestrictmodules) {
+            $this->legacyallowedmodules[$data->modulename] = 1;
         }
     }
 
     protected function after_execute() {
+        global $DB;
+
         // Add course related files, without itemid to match
         $this->add_related_files('course', 'summary', null);
         $this->add_related_files('course', 'legacy', null);
+
+        // Deal with legacy allowed modules.
+        if ($this->legacyrestrictmodules) {
+            $context = context_course::instance($this->get_courseid());
+
+            list($roleids) = get_roles_with_cap_in_context($context, 'moodle/course:manageactivities');
+            list($managerroleids) = get_roles_with_cap_in_context($context, 'moodle/site:config');
+            foreach ($managerroleids as $roleid) {
+                unset($roleids[$roleid]);
+            }
+
+            foreach (get_plugin_list('mod') as $modname => $notused) {
+                if (isset($this->legacyallowedmodules[$modname])) {
+                    // Module is allowed, no worries.
+                    continue;
+                }
+
+                $capability = 'mod/' . $modname . ':addinstance';
+                foreach ($roleids as $roleid) {
+                    assign_capability($capability, CAP_PREVENT, $roleid, $context);
+                }
+            }
+        }
     }
 }
 
@@ -1420,6 +1466,57 @@ class restore_enrolments_structure_step extends restore_structure_step {
 
 
 /**
+ * Make sure the user restoring the course can actually access it.
+ */
+class restore_fix_restorer_access_step extends restore_execution_step {
+    protected function define_execution() {
+        global $CFG, $DB;
+
+        if (!$userid = $this->task->get_userid()) {
+            return;
+        }
+
+        if (empty($CFG->restorernewroleid)) {
+            // Bad luck, no fallback role for restorers specified
+            return;
+        }
+
+        $courseid = $this->get_courseid();
+        $context = context_course::instance($courseid);
+
+        if (is_enrolled($context, $userid, 'moodle/course:update', true) or is_viewing($context, $userid, 'moodle/course:update')) {
+            // Current user may access the course (admin, category manager or restored teacher enrolment usually)
+            return;
+        }
+
+        // Try to add role only - we do not need enrolment if user has moodle/course:view or is already enrolled
+        role_assign($CFG->restorernewroleid, $userid, $context);
+
+        if (is_enrolled($context, $userid, 'moodle/course:update', true) or is_viewing($context, $userid, 'moodle/course:update')) {
+            // Extra role is enough, yay!
+            return;
+        }
+
+        // The last chance is to create manual enrol if it does not exist and and try to enrol the current user,
+        // hopefully admin selected suitable $CFG->restorernewroleid ...
+        if (!enrol_is_enabled('manual')) {
+            return;
+        }
+        if (!$enrol = enrol_get_plugin('manual')) {
+            return;
+        }
+        if (!$DB->record_exists('enrol', array('enrol'=>'manual', 'courseid'=>$courseid))) {
+            $course = $DB->get_record('course', array('id'=>$courseid), '*', MUST_EXIST);
+            $fields = array('status'=>ENROL_INSTANCE_ENABLED, 'enrolperiod'=>$enrol->get_config('enrolperiod', 0), 'roleid'=>$enrol->get_config('roleid', 0));
+            $enrol->add_instance($course, $fields);
+        }
+
+        enrol_try_internal_enrol($courseid, $userid);
+    }
+}
+
+
+/**
  * This structure steps restores the filters and their configs
  */
 class restore_filters_structure_step extends restore_structure_step {
@@ -1496,6 +1593,76 @@ class restore_comments_structure_step extends restore_structure_step {
                 }
             }
         }
+    }
+}
+
+/**
+ * This structure steps restores the calendar events
+ */
+class restore_calendarevents_structure_step extends restore_structure_step {
+
+    protected function define_structure() {
+
+        $paths = array();
+
+        $paths[] = new restore_path_element('calendarevents', '/events/event');
+
+        return $paths;
+    }
+
+    public function process_calendarevents($data) {
+        global $DB;
+
+        $data = (object)$data;
+        $oldid = $data->id;
+        $restorefiles = true; // We'll restore the files
+        // Find the userid and the groupid associated with the event. Return if not found.
+        $data->userid = $this->get_mappingid('user', $data->userid);
+        if ($data->userid === false) {
+            return;
+        }
+        if (!empty($data->groupid)) {
+            $data->groupid = $this->get_mappingid('group', $data->groupid);
+            if ($data->groupid === false) {
+                return;
+            }
+        }
+
+        $params = array(
+                'name'           => $data->name,
+                'description'    => $data->description,
+                'format'         => $data->format,
+                'courseid'       => $this->get_courseid(),
+                'groupid'        => $data->groupid,
+                'userid'         => $data->userid,
+                'repeatid'       => $data->repeatid,
+                'modulename'     => $data->modulename,
+                'eventtype'      => $data->eventtype,
+                'timestart'      => $this->apply_date_offset($data->timestart),
+                'timeduration'   => $data->timeduration,
+                'visible'        => $data->visible,
+                'uuid'           => $data->uuid,
+                'sequence'       => $data->sequence,
+                'timemodified'    => $this->apply_date_offset($data->timemodified));
+        if ($this->name == 'activity_calendar') {
+            $params['instance'] = $this->task->get_activityid();
+        } else {
+            $params['instance'] = 0;
+        }
+        $sql = 'SELECT id FROM {event} WHERE name = ? AND courseid = ? AND
+                repeatid = ? AND modulename = ? AND timestart = ? AND timeduration =?
+                AND ' . $DB->sql_compare_text('description', 255) . ' = ' . $DB->sql_compare_text('?', 255);
+        $arg = array ($params['name'], $params['courseid'], $params['repeatid'], $params['modulename'], $params['timestart'], $params['timeduration'], $params['description']);
+        $result = $DB->record_exists_sql($sql, $arg);
+        if (empty($result)) {
+            $newitemid = $DB->insert_record('event', $params);
+            $this->set_mapping('event_description', $oldid, $newitemid, $restorefiles);
+        }
+
+    }
+    protected function after_execute() {
+        // Add related files
+        $this->add_related_files('calendar', 'event_description', 'event_description');
     }
 }
 
@@ -1739,15 +1906,20 @@ class restore_course_completion_structure_step extends restore_structure_step {
 
         $data->course = $this->get_courseid();
 
-        $params = array(
-            'course' => $data->course,
-            'criteriatype' => $data->criteriatype,
-            'method' => $data->method,
-            'value' => $data->value,
-        );
-        $DB->insert_record('course_completion_aggr_methd', $params);
+        // Only create the course_completion_aggr_methd records if
+        // the target course has not them defined. MDL-28180
+        if (!$DB->record_exists('course_completion_aggr_methd', array(
+                    'course' => $data->course,
+                    'criteriatype' => $data->criteriatype))) {
+            $params = array(
+                'course' => $data->course,
+                'criteriatype' => $data->criteriatype,
+                'method' => $data->method,
+                'value' => $data->value,
+            );
+            $DB->insert_record('course_completion_aggr_methd', $params);
+        }
     }
-
 }
 
 
@@ -1867,6 +2039,134 @@ class restore_activity_logs_structure_step extends restore_course_logs_structure
         }
     }
 }
+
+
+/**
+ * Defines the restore step for advanced grading methods attached to the activity module
+ */
+class restore_activity_grading_structure_step extends restore_structure_step {
+
+    /**
+     * This step is executed only if the grading file is present
+     */
+     protected function execute_condition() {
+
+        $fullpath = $this->task->get_taskbasepath();
+        $fullpath = rtrim($fullpath, '/') . '/' . $this->filename;
+        if (!file_exists($fullpath)) {
+            return false;
+        }
+
+        return true;
+    }
+
+
+    /**
+     * Declares paths in the grading.xml file we are interested in
+     */
+    protected function define_structure() {
+
+        $paths = array();
+        $userinfo = $this->get_setting_value('userinfo');
+
+        $paths[] = new restore_path_element('grading_area', '/areas/area');
+
+        $definition = new restore_path_element('grading_definition', '/areas/area/definitions/definition');
+        $paths[] = $definition;
+        $this->add_plugin_structure('gradingform', $definition);
+
+        if ($userinfo) {
+            $instance = new restore_path_element('grading_instance',
+                '/areas/area/definitions/definition/instances/instance');
+            $paths[] = $instance;
+            $this->add_plugin_structure('gradingform', $instance);
+        }
+
+        return $paths;
+    }
+
+    /**
+     * Processes one grading area element
+     *
+     * @param array $data element data
+     */
+    protected function process_grading_area($data) {
+        global $DB;
+
+        $task = $this->get_task();
+        $data = (object)$data;
+        $oldid = $data->id;
+        $data->component = 'mod_'.$task->get_modulename();
+        $data->contextid = $task->get_contextid();
+
+        $newid = $DB->insert_record('grading_areas', $data);
+        $this->set_mapping('grading_area', $oldid, $newid);
+    }
+
+    /**
+     * Processes one grading definition element
+     *
+     * @param array $data element data
+     */
+    protected function process_grading_definition($data) {
+        global $DB;
+
+        $task = $this->get_task();
+        $data = (object)$data;
+        $oldid = $data->id;
+        $data->areaid = $this->get_new_parentid('grading_area');
+        $data->copiedfromid = null;
+        $data->timecreated = time();
+        $data->usercreated = $task->get_userid();
+        $data->timemodified = $data->timecreated;
+        $data->usermodified = $data->usercreated;
+
+        $newid = $DB->insert_record('grading_definitions', $data);
+        $this->set_mapping('grading_definition', $oldid, $newid, true);
+    }
+
+    /**
+     * Processes one grading form instance element
+     *
+     * @param array $data element data
+     */
+    protected function process_grading_instance($data) {
+        global $DB;
+
+        $data = (object)$data;
+
+        // new form definition id
+        $newformid = $this->get_new_parentid('grading_definition');
+
+        // get the name of the area we are restoring to
+        $sql = "SELECT ga.areaname
+                  FROM {grading_definitions} gd
+                  JOIN {grading_areas} ga ON gd.areaid = ga.id
+                 WHERE gd.id = ?";
+        $areaname = $DB->get_field_sql($sql, array($newformid), MUST_EXIST);
+
+        // get the mapped itemid - the activity module is expected to define the mappings
+        // for each gradable area
+        $newitemid = $this->get_mappingid(restore_gradingform_plugin::itemid_mapping($areaname), $data->itemid);
+
+        $oldid = $data->id;
+        $data->definitionid = $newformid;
+        $data->raterid = $this->get_mappingid('user', $data->raterid);
+        $data->itemid = $newitemid;
+
+        $newid = $DB->insert_record('grading_instances', $data);
+        $this->set_mapping('grading_instance', $oldid, $newid);
+    }
+
+    /**
+     * Final operations when the database records are inserted
+     */
+    protected function after_execute() {
+        // Add files embedded into the definition description
+        $this->add_related_files('grading', 'description', 'grading_definition');
+    }
+}
+
 
 /**
  * This structure step restores the grade items associated with one activity
@@ -2019,7 +2319,11 @@ class restore_block_instance_structure_step extends restore_structure_step {
         // If there is already one block of that type in the parent context
         // and the block is not multiple, stop processing
         // Use blockslib loader / method executor
-        if (!block_method_result($data->blockname, 'instance_allow_multiple')) {
+        if (!$bi = block_instance($data->blockname)) {
+            return false;
+        }
+
+        if (!$bi->instance_allow_multiple()) {
             if ($DB->record_exists_sql("SELECT bi.id
                                           FROM {block_instances} bi
                                           JOIN {block} b ON b.name = bi.blockname
@@ -2231,8 +2535,6 @@ class restore_module_structure_step extends restore_structure_step {
  *  - Activity includes completion info (file_exists)
  */
 class restore_userscompletion_structure_step extends restore_structure_step {
-    private $done = array();
-
     /**
      * To conditionally decide if this step must be executed
      * Note the "settings" conditions are evaluated in the
@@ -2276,15 +2578,14 @@ class restore_userscompletion_structure_step extends restore_structure_step {
         $data->userid = $this->get_mappingid('user', $data->userid);
         $data->timemodified = $this->apply_date_offset($data->timemodified);
 
+        // Find the existing record
+        $existing = $DB->get_record('course_modules_completion', array(
+                'coursemoduleid' => $data->coursemoduleid,
+                'userid' => $data->userid), 'id, timemodified');
         // Check we didn't already insert one for this cmid and userid
         // (there aren't supposed to be duplicates in that field, but
         // it was possible until MDL-28021 was fixed).
-        $key = $data->coursemoduleid . ',' . $data->userid;
-        if (array_key_exists($key, $this->done)) {
-            // Find the existing record
-            $existing = $DB->get_record('course_modules_completion', array(
-                    'coursemoduleid' => $data->coursemoduleid,
-                    'userid' => $data->userid), 'id, timemodified');
+        if ($existing) {
             // Update it to these new values, but only if the time is newer
             if ($existing->timemodified < $data->timemodified) {
                 $data->id = $existing->id;
@@ -2293,16 +2594,7 @@ class restore_userscompletion_structure_step extends restore_structure_step {
         } else {
             // Normal entry where it doesn't exist already
             $DB->insert_record('course_modules_completion', $data);
-            // Remember this entry
-            $this->done[$key] = true;
         }
-    }
-
-    protected function after_execute() {
-        // This gets called once per activity (according to my testing).
-        // Clearing the array isn't strictly required, but avoids using
-        // unnecessary memory.
-        $this->done = array();
     }
 }
 

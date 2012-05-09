@@ -18,10 +18,9 @@ require_once("$CFG->dirroot/mod/scorm/lib.php");
 require_once("$CFG->libdir/filelib.php");
 
 /// Constants and settings for module scorm
-define('UPDATE_NEVER', '0');
-define('UPDATE_ONCHANGE', '1');
-define('UPDATE_EVERYDAY', '2');
-define('UPDATE_EVERYTIME', '3');
+define('SCORM_UPDATE_NEVER', '0');
+define('SCORM_UPDATE_EVERYDAY', '2');
+define('SCORM_UPDATE_EVERYTIME', '3');
 
 define('SCO_ALL', 0);
 define('SCO_DATA', 1);
@@ -133,10 +132,9 @@ function scorm_get_hidetoc_array() {
  * @return array an array of update frequency options
  */
 function scorm_get_updatefreq_array() {
-    return array(0 => get_string('never'),
-                 1 => get_string('onchanges', 'scorm'),
-                 2 => get_string('everyday', 'scorm'),
-                 3 => get_string('everytime', 'scorm'));
+    return array(SCORM_UPDATE_NEVER => get_string('never'),
+                 SCORM_UPDATE_EVERYDAY => get_string('everyday', 'scorm'),
+                 SCORM_UPDATE_EVERYTIME => get_string('everytime', 'scorm'));
 }
 
 /**
@@ -244,6 +242,7 @@ function scorm_parse($scorm, $full) {
             if (!scorm_parse_aicc($scorm)) {
                 $scorm->version = 'ERROR';
             }
+            $scorm->version = 'AICC';
         }
 
     } else if ($scorm->scormtype === SCORM_TYPE_EXTERNAL and $cfg_scorm->allowtypeexternal) {
@@ -266,7 +265,13 @@ function scorm_parse($scorm, $full) {
             $scorm->version = 'ERROR';
         }
         $newhash = sha1($scorm->reference);
-
+    } else if ($scorm->scormtype === SCORM_TYPE_AICCURL  and $cfg_scorm->allowtypeexternalaicc) {
+        require_once("$CFG->dirroot/mod/scorm/datamodels/aicclib.php");
+        // AICC
+        if (!scorm_parse_aicc($scorm)) {
+            $scorm->version = 'ERROR';
+        }
+        $scorm->version = 'AICC';
     } else {
         // sorry, disabled type
         return;
@@ -416,7 +421,8 @@ function scorm_insert_track($userid, $scormid, $scoid, $attempt, $element, $valu
     }
 
     if (strstr($element, '.score.raw') ||
-        (($element == 'cmi.core.lesson_status' || $element == 'cmi.completion_status') && ($track->value == 'completed' || $track->value == 'passed'))) {
+        (in_array($element, array('cmi.completion_status', 'cmi.core.lesson_status', 'cmi.success_status'))
+         && in_array($track->value, array('completed', 'passed')))) {
         $scorm = $DB->get_record('scorm', array('id' => $scormid));
         include_once($CFG->dirroot.'/mod/scorm/lib.php');
         scorm_update_grades($scorm, $userid);
@@ -722,7 +728,7 @@ function scorm_course_format_display($user, $course) {
 function scorm_view_display ($user, $scorm, $action, $cm) {
     global $CFG, $DB, $PAGE, $OUTPUT;
 
-    if ($scorm->updatefreq == UPDATE_EVERYTIME) {
+    if ($scorm->scormtype != SCORM_TYPE_LOCAL && $scorm->updatefreq == SCORM_UPDATE_EVERYTIME) {
         scorm_parse($scorm, false);
     }
 
@@ -779,7 +785,7 @@ function scorm_view_display ($user, $scorm, $action, $cm) {
     if ($scorm->lastattemptlock == 0 || $result->attemptleft > 0) {
         ?>
             <div class="scorm-center">
-               <form id="theform" method="post" action="<?php echo $CFG->wwwroot ?>/mod/scorm/player.php">
+               <form id="scormviewform" method="post" action="<?php echo $CFG->wwwroot ?>/mod/scorm/player.php">
         <?php
         if ($scorm->hidebrowse == 0) {
             print_string('mode', 'scorm');
@@ -799,6 +805,9 @@ function scorm_view_display ($user, $scorm, $action, $cm) {
                       <label for="a"><?php print_string('newattempt', 'scorm') ?></label>
             <?php
         }
+        if (!empty($scorm->popup)) {
+            echo '<input type="hidden" name="display" value="popup" />'."\n";
+        }
         ?>
               <br />
               <input type="hidden" name="scoid"/>
@@ -816,7 +825,7 @@ function scorm_simple_play($scorm, $user, $context, $cmid) {
 
     $result = false;
 
-    if ($scorm->updatefreq == UPDATE_EVERYTIME) {
+    if ($scorm->scormtype != SCORM_TYPE_LOCAL && $scorm->updatefreq == SCORM_UPDATE_EVERYTIME) {
         scorm_parse($scorm, false);
     }
     if (has_capability('mod/scorm:viewreport', $context)) { //if this user can view reports, don't skipview so they can see links to reports.
@@ -1024,8 +1033,8 @@ function scorm_element_cmp($a, $b) {
  * @param object $scorm a moodle scrom object - mdl_scorm
  * @return string - Attempt status string
  */
-function scorm_get_attempt_status($user, $scorm) {
-    global $DB;
+function scorm_get_attempt_status($user, $scorm, $cm='') {
+    global $DB, $PAGE, $OUTPUT;
 
     $attempts = scorm_get_attempt_count($user->id, $scorm, true);
     if (empty($attempts)) {
@@ -1101,6 +1110,17 @@ function scorm_get_attempt_status($user, $scorm) {
     if ($attemptcount >= $scorm->maxattempt and $scorm->maxattempt > 0) {
         $result .= '<p><font color="#cc0000">'.get_string('exceededmaxattempts', 'scorm').'</font></p>';
     }
+    if (!empty($cm)) {
+        $context = context_module::instance($cm->id);
+        if (has_capability('mod/scorm:deleteownresponses', $context) &&
+            $DB->record_exists('scorm_scoes_track', array('userid' => $user->id, 'scormid' => $scorm->id))) {
+            //check to see if any data is stored for this user:
+            $deleteurl = new moodle_url($PAGE->url, array('action'=>'delete', 'sesskey' => sesskey()));
+            $result .= $OUTPUT->single_button($deleteurl, get_string('deleteallattempts', 'scorm'));
+        }
+    }
+
+
     return $result;
 }
 
@@ -1487,15 +1507,6 @@ function scorm_get_toc($user,$scorm,$cmid,$toclink=TOCJSLINK,$currentorg='',$sco
     if ($tocheader) {
         $result->toc .= '</div></div></div>';
         $result->toc .= '<div id="scorm_navpanel"></div>';
-    }
-
-
-    if ($scorm->hidetoc == 0) {
-        $PAGE->requires->data_for_js('scormdata', array(
-                'plusicon' => $OUTPUT->pix_url('plus', 'scorm'),
-                'minusicon' => $OUTPUT->pix_url('minus', 'scorm')));
-        $PAGE->requires->js('/lib/cookies.js');
-        $PAGE->requires->js('/mod/scorm/datamodels/scorm_datamodels.js');
     }
 
     $url = new moodle_url('/mod/scorm/player.php?a='.$scorm->id.'&currentorg='.$currentorg.$modestr);

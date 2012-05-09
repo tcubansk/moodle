@@ -25,18 +25,9 @@
 
 defined('MOODLE_INTERNAL') || die();
 function xmldb_enrol_database_upgrade($oldversion) {
-    global $DB;
+    global $CFG, $DB;
 
     $dbman = $DB->get_manager();
-
-    // fix leftovers after incorrect 2.x upgrade in install.php
-    if ($oldversion < 2010073101) {
-        unset_config('enrol_db_localrolefield');
-        unset_config('enrol_db_remoterolefield');
-        unset_config('enrol_db_disableunenrol');
-
-        upgrade_plugin_savepoint(true, 2010073101, 'enrol', 'database');
-    }
 
 
     return true;

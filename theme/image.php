@@ -24,6 +24,10 @@
  */
 
 
+// disable moodle specific debug messages and any errors in output,
+// comment out when debugging or better look into error log!
+define('NO_DEBUG_DISPLAY', true);
+
 // we need just the values from config.php and minlib.php
 define('ABORT_AFTER_CONFIG', true);
 require('../config.php'); // this stops immediately at the beginning of lib/setup.php
@@ -115,7 +119,11 @@ if ($rev > -1) {
     $pathinfo = pathinfo($imagefile);
     $cacheimage = "$candidatelocation/$image.".$pathinfo['extension'];
     if (!file_exists($cacheimage)) {
-        check_dir_exists(dirname($cacheimage));
+        if (!file_exists(dirname($cacheimage))) {
+            // Sometimes there was a race condition in check_dir_exists(),
+            // so let the next copy() log errors instead.
+            @mkdir(dirname($cacheimage), $CFG->directorypermissions, true);
+        }
         copy($imagefile, $cacheimage);
     }
     send_cached_image($cacheimage, $rev);
@@ -131,6 +139,9 @@ if ($rev > -1) {
 // parameters to get the best performance.
 
 function send_cached_image($imagepath, $rev) {
+    global $CFG;
+    require("$CFG->dirroot/lib/xsendfilelib.php");
+
     $lifetime = 60*60*24*30; // 30 days
     $pathinfo = pathinfo($imagepath);
     $imagename = $pathinfo['filename'].'.'.$pathinfo['extension'];
@@ -146,6 +157,10 @@ function send_cached_image($imagepath, $rev) {
     header('Accept-Ranges: none');
     header('Content-Type: '.$mimetype);
     header('Content-Length: '.filesize($imagepath));
+
+    if (xsendfile($imagepath)) {
+        die;
+    }
 
     // no need to gzip already compressed images ;-)
 

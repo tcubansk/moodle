@@ -42,11 +42,28 @@ define('QUIZ_MAX_DECIMAL_OPTION', 5);
 define('QUIZ_MAX_Q_DECIMAL_OPTION', 7);
 /**#@-*/
 
+/**#@+
+ * Options determining how the grades from individual attempts are combined to give
+ * the overall grade for a user
+ */
+define('QUIZ_GRADEHIGHEST', '1');
+define('QUIZ_GRADEAVERAGE', '2');
+define('QUIZ_ATTEMPTFIRST', '3');
+define('QUIZ_ATTEMPTLAST',  '4');
+/**#@-*/
+
 /**
  * If start and end date for the quiz are more than this many seconds apart
  * they will be represented by two separate events in the calendar
  */
 define('QUIZ_MAX_EVENT_LENGTH', 5*24*60*60); // 5 days
+
+/**#@+
+ * Options for navigation method within quizzes.
+ */
+define('QUIZ_NAVMETHOD_FREE', 'free');
+define('QUIZ_NAVMETHOD_SEQ',  'sequential');
+/**#@-*/
 
 /**
  * Given an object containing all the necessary data,
@@ -369,8 +386,9 @@ function quiz_user_outline($course, $user, $mod, $quiz) {
     $result->info = get_string('grade') . ': ' . $grade->str_long_grade;
 
     //datesubmitted == time created. dategraded == time modified or time overridden
-    //if grade was last modified by the user themselves use date graded. Otherwise use date submitted
-    //TODO: move this copied & pasted code somewhere in the grades API. See MDL-26704
+    //if grade was last modified by the user themselves use date graded. Otherwise use
+    // date submitted
+    // TODO: move this copied & pasted code somewhere in the grades API. See MDL-26704
     if ($grade->usermodified == $user->id || empty($grade->datesubmitted)) {
         $result->time = $grade->dategraded;
     } else {
@@ -384,7 +402,6 @@ function quiz_user_outline($course, $user, $mod, $quiz) {
  * Print a detailed representation of what a  user has done with
  * a given particular instance of this module, for user activity reports.
  *
- * @global object
  * @param object $course
  * @param object $user
  * @param object $mod
@@ -393,7 +410,8 @@ function quiz_user_outline($course, $user, $mod, $quiz) {
  */
 function quiz_user_complete($course, $user, $mod, $quiz) {
     global $DB, $CFG, $OUTPUT;
-    require_once("$CFG->libdir/gradelib.php");
+    require_once($CFG->libdir . '/gradelib.php');
+    require_once($CFG->libdir . '/mod/quiz/locallib.php');
 
     $grades = grade_get_grades($course->id, 'mod', 'quiz', $quiz->id, $user->id);
     if (!empty($grades->items[0]->grades)) {
@@ -408,8 +426,8 @@ function quiz_user_complete($course, $user, $mod, $quiz) {
             array('userid' => $user->id, 'quiz' => $quiz->id), 'attempt')) {
         foreach ($attempts as $attempt) {
             echo get_string('attempt', 'quiz').' '.$attempt->attempt.': ';
-            if ($attempt->timefinish == 0) {
-                print_string('unfinished');
+            if ($attempt->state != quiz_attempt::FINISHED) {
+                echo quiz_attempt_state_name($attempt->state);
             } else {
                 echo quiz_format_grade($quiz, $attempt->sumgrades) . '/' .
                         quiz_format_grade($quiz, $quiz->sumgrades);
@@ -424,13 +442,35 @@ function quiz_user_complete($course, $user, $mod, $quiz) {
 }
 
 /**
- * Function to be run periodically according to the moodle cron
- * This function searches for things that need to be done, such
- * as sending out mail, toggling flags etc ...
- *
- * @return bool true
+ * Quiz periodic clean-up tasks.
  */
 function quiz_cron() {
+    global $CFG;
+
+    // Since the quiz specifies $module->cron = 60, so that the subplugins can
+    // have frequent cron if they need it, we now need to do our own scheduling.
+    $quizconfig = get_config('quiz');
+    if (!isset($quizconfig->overduelastrun)) {
+        $quizconfig->overduelastrun = 0;
+        $quizconfig->overduedoneto  = 0;
+    }
+
+    $timenow = time();
+    if ($timenow > $quizconfig->overduelastrun + 3600) {
+        require_once($CFG->dirroot . '/mod/quiz/cronlib.php');
+        $overduehander = new mod_quiz_overdue_attempt_updater();
+
+        $processto = $timenow - $quizconfig->graceperiodmin;
+        $overduehander->update_overdue_attempts($timenow, $quizconfig->overduedoneto, $processto);
+
+        set_config('overduelastrun', $timenow, 'quiz');
+        set_config('overduedoneto', $processto, 'quiz');
+    }
+
+    // Run cron for our sub-plugin types.
+    cron_execute_plugin_type('quiz', 'quiz reports');
+    cron_execute_plugin_type('quizaccess', 'quiz access rules');
+
     return true;
 }
 
@@ -444,18 +484,36 @@ function quiz_cron() {
  */
 function quiz_get_user_attempts($quizid, $userid, $status = 'finished', $includepreviews = false) {
     global $DB;
-    $status_condition = array(
-        'all' => '',
-        'finished' => ' AND timefinish > 0',
-        'unfinished' => ' AND timefinish = 0'
-    );
+
+    $params = array();
+    switch ($status) {
+        case 'all':
+            $statuscondition = '';
+            break;
+
+        case 'finished':
+            $statuscondition = ' AND state IN (:state1, :state2)';
+            $params['state1'] = quiz_attempt::FINISHED;
+            $params['state2'] = quiz_attempt::ABANDONED;
+            break;
+
+        case 'unfinished':
+            $statuscondition = ' AND state IN (:state1, :state2)';
+            $params['state1'] = quiz_attempt::IN_PROGRESS;
+            $params['state2'] = quiz_attempt::OVERDUE;
+            break;
+    }
+
     $previewclause = '';
     if (!$includepreviews) {
         $previewclause = ' AND preview = 0';
     }
+
+    $params['quizid'] = $quizid;
+    $params['userid'] = $userid;
     return $DB->get_records_select('quiz_attempts',
-            'quiz = ? AND userid = ?' . $previewclause . $status_condition[$status],
-            array($quizid, $userid), 'attempt ASC');
+            'quiz = :quizid AND userid = :userid' . $previewclause . $statuscondition,
+            $params, 'attempt ASC');
 }
 
 /**
@@ -527,8 +585,10 @@ function quiz_format_question_grade($quiz, $grade) {
 /**
  * Update grades in central gradebook
  *
+ * @category grade
  * @param object $quiz the quiz settings.
  * @param int $userid specific user only, 0 means all users.
+ * @param bool $nullifnone If a single user is specified and $nullifnone is true a grade item with a null rawgrade will be inserted
  */
 function quiz_update_grades($quiz, $userid = 0, $nullifnone = true) {
     global $CFG, $DB;
@@ -580,8 +640,9 @@ function quiz_upgrade_grades() {
 }
 
 /**
- * Create grade item for given quiz
+ * Create or update the grade item for given quiz
  *
+ * @category grade
  * @param object $quiz object with extra cmidnumber
  * @param mixed $grades optional array/object of grade(s); 'reset' means reset grades in gradebook
  * @return int 0 if ok, error code otherwise
@@ -645,6 +706,7 @@ function quiz_grade_item_update($quiz, $grades = null) {
     if (!empty($gradebook_grades->items)) {
         $grade_item = $gradebook_grades->items[0];
         if ($grade_item->locked) {
+            // NOTE: this is an extremely nasty hack! It is not a bug if this confirmation fails badly.  --skodak
             $confirm_regrade = optional_param('confirm_regrade', 0, PARAM_INT);
             if (!$confirm_regrade) {
                 $message = get_string('gradeitemislocked', 'grades');
@@ -670,6 +732,7 @@ function quiz_grade_item_update($quiz, $grades = null) {
 /**
  * Delete grade item for given quiz
  *
+ * @category grade
  * @param object $quiz object
  * @return object quiz
  */
@@ -742,7 +805,7 @@ function quiz_get_recent_mod_activity(&$activities, &$index, $timestart,
         $course = $DB->get_record('course', array('id' => $courseid));
     }
 
-    $modinfo =& get_fast_modinfo($course);
+    $modinfo = get_fast_modinfo($course);
 
     $cm = $modinfo->cms[$cmid];
     $quiz = $DB->get_record('quiz', array('id' => $cm->instance));
@@ -1038,6 +1101,9 @@ function quiz_after_add_or_update($quiz) {
                 array('id' => $feedback->id));
     }
 
+    // Store any settings belonging to the access rules.
+    quiz_access_manager::save_settings($quiz);
+
     // Update the events relating to this quiz.
     quiz_update_events($quiz);
 
@@ -1269,12 +1335,14 @@ function quiz_reset_userdata($data) {
             'error' => false);
 
         // Remove all grades from gradebook
+        $DB->delete_records_select('quiz_grades',
+                'quiz IN (SELECT id FROM {quiz} WHERE course = ?)', array($data->courseid));
         if (empty($data->reset_gradebook_grades)) {
             quiz_reset_gradebook($data->courseid);
         }
         $status[] = array(
             'component' => $componentstr,
-            'item' => get_string('attemptsdeleted', 'quiz'),
+            'item' => get_string('gradesdeleted', 'quiz'),
             'error' => false);
     }
 
@@ -1429,9 +1497,10 @@ function quiz_num_attempt_summary($quiz, $cm, $returnzero = false, $currentgroup
     $numattempts = $DB->count_records('quiz_attempts', array('quiz'=> $quiz->id, 'preview'=>0));
     if ($numattempts || $returnzero) {
         if (groups_get_activity_groupmode($cm)) {
+            $a = new stdClass();
             $a->total = $numattempts;
             if ($currentgroup) {
-                $a->group = $DB->count_records_sql('SELECT count(1) FROM ' .
+                $a->group = $DB->count_records_sql('SELECT COUNT(DISTINCT qa.id) FROM ' .
                         '{quiz_attempts} qa JOIN ' .
                         '{groups_members} gm ON qa.userid = gm.userid ' .
                         'WHERE quiz = ? AND preview = 0 AND groupid = ?',
@@ -1439,7 +1508,7 @@ function quiz_num_attempt_summary($quiz, $cm, $returnzero = false, $currentgroup
                 return get_string('attemptsnumthisgroup', 'quiz', $a);
             } else if ($groups = groups_get_all_groups($cm->course, $USER->id, $cm->groupingid)) {
                 list($usql, $params) = $DB->get_in_or_equal(array_keys($groups));
-                $a->group = $DB->count_records_sql('SELECT count(1) FROM ' .
+                $a->group = $DB->count_records_sql('SELECT COUNT(DISTINCT qa.id) FROM ' .
                         '{quiz_attempts} qa JOIN ' .
                         '{groups_members} gm ON qa.userid = gm.userid ' .
                         'WHERE quiz = ? AND preview = 0 AND ' .
@@ -1618,15 +1687,18 @@ function quiz_extend_settings_navigation($settings, $quiznode) {
 /**
  * Serves the quiz files.
  *
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ * @package  mod_quiz
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - justsend the file
  */
-function quiz_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function quiz_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG, $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -1656,28 +1728,33 @@ function quiz_pluginfile($course, $cm, $context, $filearea, $args, $forcedownloa
     if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
         return false;
     }
-    send_stored_file($file, 0, 0, true);
+    send_stored_file($file, 0, 0, true, $options);
 }
 
 /**
  * Called via pluginfile.php -> question_pluginfile to serve files belonging to
  * a question in a question_attempt when that attempt is a quiz attempt.
  *
- * @param object $course course settings object
- * @param object $context context object
+ * @package  mod_quiz
+ * @category files
+ * @param stdClass $course course settings object
+ * @param stdClass $context context object
  * @param string $component the name of the component we are serving files for.
  * @param string $filearea the name of the file area.
+ * @param int $qubaid the attempt usage id.
+ * @param int $slot the id of a question in this quiz attempt.
  * @param array $args the remaining bits of the file path.
  * @param bool $forcedownload whether the user must be forced to download the file.
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - justsend the file
  */
 function mod_quiz_question_pluginfile($course, $context, $component,
-        $filearea, $qubaid, $slot, $args, $forcedownload) {
-    global $USER, $CFG;
+        $filearea, $qubaid, $slot, $args, $forcedownload, array $options=array()) {
+    global $CFG;
     require_once($CFG->dirroot . '/mod/quiz/locallib.php');
 
     $attemptobj = quiz_attempt::create_from_usage_id($qubaid);
-    require_login($attemptobj->get_courseid(), false, $attemptobj->get_cm());
+    require_login($attemptobj->get_course(), false, $attemptobj->get_cm());
 
     if ($attemptobj->is_own_attempt() && !$attemptobj->is_finished()) {
         // In the middle of an attempt.
@@ -1704,7 +1781,7 @@ function mod_quiz_question_pluginfile($course, $context, $component,
         send_file_not_found();
     }
 
-    send_stored_file($file, 0, 0, $forcedownload);
+    send_stored_file($file, 0, 0, $forcedownload, $options);
 }
 
 /**
@@ -1718,4 +1795,14 @@ function quiz_page_type_list($pagetype, $parentcontext, $currentcontext) {
         'mod-quiz-*'=>get_string('page-mod-quiz-x', 'quiz'),
         'mod-quiz-edit'=>get_string('page-mod-quiz-edit', 'quiz'));
     return $module_pagetype;
+}
+
+/**
+ * @return the options for quiz navigation.
+ */
+function quiz_get_navigation_options() {
+    return array(
+        QUIZ_NAVMETHOD_FREE => get_string('navmethod_free', 'quiz'),
+        QUIZ_NAVMETHOD_SEQ  => get_string('navmethod_seq', 'quiz')
+    );
 }

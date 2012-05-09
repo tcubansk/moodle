@@ -52,6 +52,43 @@ class enrol_database_plugin extends enrol_plugin {
     }
 
     /**
+     * Does this plugin allow manual unenrolment of a specific user?
+     * Yes, but only if user suspended...
+     *
+     * @param stdClass $instance course enrol instance
+     * @param stdClass $ue record from user_enrolments table
+     *
+     * @return bool - true means user with 'enrol/xxx:unenrol' may unenrol this user, false means nobody may touch this user enrolment
+     */
+    public function allow_unenrol_user(stdClass $instance, stdClass $ue) {
+        if ($ue->status == ENROL_USER_SUSPENDED) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Gets an array of the user enrolment actions
+     *
+     * @param course_enrolment_manager $manager
+     * @param stdClass $ue A user enrolment object
+     * @return array An array of user_enrolment_actions
+     */
+    public function get_user_enrolment_actions(course_enrolment_manager $manager, $ue) {
+        $actions = array();
+        $context = $manager->get_context();
+        $instance = $ue->enrolmentinstance;
+        $params = $manager->get_moodlepage()->url->params();
+        $params['ue'] = $ue->id;
+        if ($this->allow_unenrol_user($instance, $ue) && has_capability('enrol/database:unenrol', $context)) {
+            $url = new moodle_url('/enrol/unenroluser.php', $params);
+            $actions[] = new user_enrolment_action(new pix_icon('t/delete', ''), get_string('unenrol', 'enrol'), $url, array('class'=>'unenrollink', 'rel'=>$ue->id));
+        }
+        return $actions;
+    }
+
+    /**
      * Forces synchronisation of user enrolments with external database,
      * does not create new courses.
      *
@@ -170,11 +207,11 @@ class enrol_database_plugin extends enrol_plugin {
             if ($e = $DB->get_record('user_enrolments', array('userid'=>$user->id, 'enrolid'=>$instance->id))) {
                 // reenable enrolment when previously disable enrolment refreshed
                 if ($e->status == ENROL_USER_SUSPENDED) {
-                    $DB->set_field('user_enrolments', 'status', ENROL_USER_ACTIVE, array('enrolid'=>$instance->id, 'userid'=>$user->id));
+                    $this->update_user_enrol($instance, $user->id, ENROL_USER_ACTIVE);
                 }
             } else {
                 $roleid = reset($roles);
-                $this->enrol_user($instance, $user->id, $roleid);
+                $this->enrol_user($instance, $user->id, $roleid, 0, 0, ENROL_USER_ACTIVE);
             }
 
             if (!$context = get_context_instance(CONTEXT_COURSE, $instance->courseid)) {
@@ -185,7 +222,7 @@ class enrol_database_plugin extends enrol_plugin {
 
             $existing = array();
             foreach ($current as $r) {
-                if (in_array($r->id, $roles)) {
+                if (in_array($r->roleid, $roles)) {
                     $existing[$r->roleid] = $r->roleid;
                 } else {
                     role_unassign($r->roleid, $user->id, $context->id, 'enrol_database', $instance->id);
@@ -231,7 +268,7 @@ class enrol_database_plugin extends enrol_plugin {
             } else if ($unenrolaction == ENROL_EXT_REMOVED_SUSPEND or $unenrolaction == ENROL_EXT_REMOVED_SUSPENDNOROLES) {
                 // disable
                 if ($instance->ustatus != ENROL_USER_SUSPENDED) {
-                    $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, array('enrolid'=>$instance->id, 'userid'=>$user->id));
+                    $this->update_user_enrol($instance, $user->id, ENROL_USER_SUSPENDED);
                 }
                 if ($unenrolaction == ENROL_EXT_REMOVED_SUSPENDNOROLES) {
                     role_unassign_all(array('contextid'=>$context->id, 'userid'=>$user->id, 'component'=>'enrol_database', 'itemid'=>$instance->id));
@@ -317,9 +354,7 @@ class enrol_database_plugin extends enrol_plugin {
         }
         $preventfullunenrol = empty($externalcourses);
         if ($preventfullunenrol and $unenrolaction == ENROL_EXT_REMOVED_UNENROL) {
-            if ($verbose) {
-                mtrace('  Preventing unenrolment of all current users, because it might result in major data loss, there has to be at least one record in external enrol table, sorry.');
-            }
+            mtrace('  Preventing unenrolment of all current users, because it might result in major data loss, there has to be at least one record in external enrol table, sorry.');
         }
 
         // first find all existing courses with enrol instance
@@ -455,7 +490,7 @@ class enrol_database_plugin extends enrol_plugin {
             foreach ($requested_roles as $userid=>$userroles) {
                 foreach ($userroles as $roleid) {
                     if (empty($current_roles[$userid])) {
-                        $this->enrol_user($instance, $userid, $roleid);
+                        $this->enrol_user($instance, $userid, $roleid, 0, 0, ENROL_USER_ACTIVE);
                         $current_roles[$userid][$roleid] = $roleid;
                         $current_status[$userid] = ENROL_USER_ACTIVE;
                         if ($verbose) {
@@ -488,7 +523,7 @@ class enrol_database_plugin extends enrol_plugin {
 
                 // reenable enrolment when previously disable enrolment refreshed
                 if ($current_status[$userid] == ENROL_USER_SUSPENDED) {
-                    $DB->set_field('user_enrolments', 'status', ENROL_USER_ACTIVE, array('enrolid'=>$instance->id, 'userid'=>$userid));
+                    $this->update_user_enrol($instance, $userid, ENROL_USER_ACTIVE);
                     if ($verbose) {
                         mtrace("  unsuspending: $userid ==> $course->shortname");
                     }
@@ -520,7 +555,7 @@ class enrol_database_plugin extends enrol_plugin {
                         continue;
                     }
                     if ($status != ENROL_USER_SUSPENDED) {
-                        $DB->set_field('user_enrolments', 'status', ENROL_USER_SUSPENDED, array('enrolid'=>$instance->id, 'userid'=>$userid));
+                        $this->update_user_enrol($instance, $userid, ENROL_USER_SUSPENDED);
                         if ($verbose) {
                             mtrace("  suspending: $userid ==> $course->shortname");
                         }
@@ -585,6 +620,8 @@ class enrol_database_plugin extends enrol_plugin {
         $idnumber  = strtolower($this->get_config('newcourseidnumber'));
         $category  = strtolower($this->get_config('newcoursecategory'));
 
+        $localcategoryfield = $this->get_config('localcategoryfield', 'id');
+
         $sqlfields = array($fullname, $shortname);
         if ($category) {
             $sqlfields[] = $category;
@@ -616,17 +653,17 @@ class enrol_database_plugin extends enrol_plugin {
                         }
                         continue;
                     }
-                    if ($category and !$DB->record_exists('course_categories', array('id'=>$fields[$category]))) {
+                    if ($category and !$coursecategory = $DB->get_record('course_categories', array($localcategoryfield=>$fields[$category]), 'id')) {
                         if ($verbose) {
-                            mtrace('  error: invalid category id, can not create course: '.$fields[$shortname]);
+                            mtrace('  error: invalid category '.$localcategoryfield.', can not create course: '.$fields[$shortname]);
                         }
                         continue;
                     }
                     $course = new stdClass();
                     $course->fullname  = $fields[$fullname];
                     $course->shortname = $fields[$shortname];
-                    $course->idnumber  = $idnumber ? $fields[$idnumber] : NULL;
-                    $course->category  = $category ? $fields[$category] : NULL;
+                    $course->idnumber  = $idnumber ? $fields[$idnumber] : '';
+                    $course->category  = $category ? $coursecategory->id : NULL;
                     $createcourses[] = $course;
                 }
             }
@@ -639,22 +676,44 @@ class enrol_database_plugin extends enrol_plugin {
         if ($createcourses) {
             require_once("$CFG->dirroot/course/lib.php");
 
-            $template        = $this->get_config('templatecourse');
+            $templatecourse = $this->get_config('templatecourse');
             $defaultcategory = $this->get_config('defaultcategory');
 
-            if ($template) {
-                if ($template = $DB->get_record('course', array('shortname'=>$template))) {
+            $template = false;
+            if ($templatecourse) {
+                if ($template = $DB->get_record('course', array('shortname'=>$templatecourse))) {
                     unset($template->id);
                     unset($template->fullname);
                     unset($template->shortname);
                     unset($template->idnumber);
                 } else {
-                    $template = new stdClass();
+                    if ($verbose) {
+                        mtrace("  can not find template for new course!");
+                    }
                 }
-            } else {
+            }
+            if (!$template) {
+                $courseconfig = get_config('moodlecourse');
                 $template = new stdClass();
+                $template->summary        = '';
+                $template->summaryformat  = FORMAT_HTML;
+                $template->format         = $courseconfig->format;
+                $template->numsections    = $courseconfig->numsections;
+                $template->hiddensections = $courseconfig->hiddensections;
+                $template->newsitems      = $courseconfig->newsitems;
+                $template->showgrades     = $courseconfig->showgrades;
+                $template->showreports    = $courseconfig->showreports;
+                $template->maxbytes       = $courseconfig->maxbytes;
+                $template->groupmode      = $courseconfig->groupmode;
+                $template->groupmodeforce = $courseconfig->groupmodeforce;
+                $template->visible        = $courseconfig->visible;
+                $template->lang           = $courseconfig->lang;
+                $template->groupmodeforce = $courseconfig->groupmodeforce;
             }
             if (!$DB->record_exists('course_categories', array('id'=>$defaultcategory))) {
+                if ($verbose) {
+                    mtrace("  default course category does not exist!");
+                }
                 $categories = $DB->get_records('course_categories', array(), 'sortorder', 'id', 0, 1);
                 $first = reset($categories);
                 $defaultcategory = $first->id;
@@ -725,9 +784,12 @@ class enrol_database_plugin extends enrol_plugin {
             ob_start(); //start output buffer to allow later use of the page headers
         }
 
-        $result = $extdb->Connect($this->get_config('dbhost'), $this->get_config('dbuser'), $this->get_config('dbpass'), $this->get_config('dbname'), true);
-        if (!$result) {
-            return null;
+        // the dbtype my contain the new connection URL, so make sure we are not connected yet
+        if (!$extdb->IsConnected()) {
+            $result = $extdb->Connect($this->get_config('dbhost'), $this->get_config('dbuser'), $this->get_config('dbpass'), $this->get_config('dbname'), true);
+            if (!$result) {
+                return null;
+            }
         }
 
         $extdb->SetFetchMode(ADODB_FETCH_ASSOC);
@@ -759,7 +821,7 @@ class enrol_database_plugin extends enrol_plugin {
             }
             return $text;
         } else {
-            return textlib_get_instance()->convert($text, 'utf-8', $dbenc);
+            return textlib::convert($text, 'utf-8', $dbenc);
         }
     }
 
@@ -774,7 +836,7 @@ class enrol_database_plugin extends enrol_plugin {
             }
             return $text;
         } else {
-            return textlib_get_instance()->convert($text, $dbenc, 'utf-8');
+            return textlib::convert($text, $dbenc, 'utf-8');
         }
     }
 }

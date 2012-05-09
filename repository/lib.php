@@ -697,7 +697,7 @@ abstract class repository {
      * @param string $filename
      * @return string
      */
-    function append_suffix($filename) {
+    public static function append_suffix($filename) {
         $pathinfo = pathinfo($filename);
         if (empty($pathinfo['extension'])) {
             return $filename . RENAME_SUFFIX;
@@ -818,6 +818,9 @@ abstract class repository {
         } else {
             $accepted_types = '*';
         }
+        // Sortorder should be unique, which is not true if we use $record->sortorder
+        // and there are multiple instances of any repository type
+        $sortorder = 1;
         foreach ($records as $record) {
             if (!file_exists($CFG->dirroot . '/repository/'. $record->repositorytype.'/lib.php')) {
                 continue;
@@ -826,6 +829,7 @@ abstract class repository {
             $options['visible'] = $record->visible;
             $options['type']    = $record->repositorytype;
             $options['typeid']  = $record->typeid;
+            $options['sortorder'] = $sortorder++;
             // tell instance what file types will be accepted by file picker
             $classname = 'repository_' . $record->repositorytype;
 
@@ -869,7 +873,11 @@ abstract class repository {
                     }
                     if ($record->repositorytype == 'coursefiles') {
                         // coursefiles plugin needs managefiles permission
-                        $capability = $capability && has_capability('moodle/course:managefiles', $current_context);
+                        if (!empty($current_context)) {
+                            $capability = $capability && has_capability('moodle/course:managefiles', $current_context);
+                        } else {
+                            $capability = $capability && has_capability('moodle/course:managefiles', get_system_context());
+                        }
                     }
                     if ($is_supported && $capability) {
                         $repositories[$repository->id] = $repository;
@@ -1447,6 +1455,7 @@ abstract class repository {
         $meta->icon = $OUTPUT->pix_url('icon', 'repository_'.$meta->type)->out(false);
         $meta->supported_types = $ft->get_extensions($this->supported_filetypes());
         $meta->return_types = $this->supported_returntypes();
+        $meta->sortorder = $this->options['sortorder'];
         return $meta;
     }
 
@@ -1619,7 +1628,7 @@ abstract class repository {
                         $pass = true;
                     } else {
                         foreach ($extensions as $ext) {
-                            if (preg_match('#'.$ext.'$#', $value['title'])) {
+                            if (preg_match('#'.$ext.'$#i', $value['title'])) {
                                 $pass = true;
                             }
                         }
@@ -1663,7 +1672,7 @@ abstract class repository {
      *
      * @return mixed, see get_listing()
      */
-    public function search($search_text) {
+    public function search($search_text, $page = 0) {
         $list = array();
         $list['list'] = array();
         return false;
@@ -1745,7 +1754,7 @@ abstract class repository {
      * @param object $mform Moodle form (passed by reference)
      * @param string $classname repository class name
      */
-    public function type_config_form($mform, $classname = 'repository') {
+    public static function type_config_form($mform, $classname = 'repository') {
         $instnaceoptions = call_user_func(array($classname, 'get_instance_option_names'), $mform, $classname);
         if (empty($instnaceoptions)) {
             // this plugin has only one instance
@@ -1815,7 +1824,7 @@ abstract class repository {
      * @param string $newfilename
      * @return boolean
      */
-    function overwrite_existing_draftfile($itemid, $filepath, $filename, $newfilepath, $newfilename) {
+    public static function overwrite_existing_draftfile($itemid, $filepath, $filename, $newfilepath, $newfilename) {
         global $USER;
         $fs = get_file_storage();
         $user_context = get_context_instance(CONTEXT_USER, $USER->id);
@@ -1841,7 +1850,7 @@ abstract class repository {
      * @param string $filename
      * @return boolean
      */
-    function delete_tempfile_from_draft($draftitemid, $filepath, $filename) {
+    public static function delete_tempfile_from_draft($draftitemid, $filepath, $filename) {
         global $USER;
         $fs = get_file_storage();
         $user_context = get_context_instance(CONTEXT_USER, $USER->id);
@@ -1943,7 +1952,7 @@ final class repository_instance_form extends moodleform {
         }
     }
 
-    public function validation($data) {
+    public function validation($data, $files) {
         global $DB;
         $errors = array();
         $plugin = $this->_customdata['plugin'];
@@ -2053,7 +2062,7 @@ final class repository_type_form extends moodleform {
         $this->add_action_buttons(true, get_string('save','repository'));
     }
 
-    public function validation($data) {
+    public function validation($data, $files) {
         $errors = array();
         $plugin = $this->_customdata['plugin'];
         $instance = (isset($this->_customdata['instance'])
@@ -2146,6 +2155,8 @@ function initialise_filepicker($args) {
     $return->return_types = $args->return_types;
     foreach ($repositories as $repository) {
         $meta = $repository->get_meta();
+        // Please note that the array keys for repositories are used within
+        // JavaScript a lot, the key NEEDS to be the repository id.
         $return->repositories[$repository->id] = $meta;
     }
     return $return;

@@ -53,12 +53,13 @@ if (!$wiki = wiki_get_wiki($subwiki->wikiid)) {
     print_error('incorrectwikiid', 'wiki');
 }
 
-require_login($course->id, true, $cm);
+require_login($course, true, $cm);
 
 
 $context = get_context_instance(CONTEXT_MODULE, $cm->id);
 require_capability('mod/wiki:managewiki', $context);
-add_to_log($course->id, "wiki", "admin", "admin.php?id=$cm->id", "$wiki->id");
+
+add_to_log($course->id, "wiki", "admin", "admin.php?pageid=".$page->id, $page->id, $cm->id);
 
 //Delete page if a page ID to delete was supplied
 if (!empty($delete) && confirm_sesskey()) {

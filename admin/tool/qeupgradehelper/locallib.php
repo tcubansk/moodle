@@ -178,7 +178,7 @@ abstract class tool_qeupgradehelper_quiz_list {
             html_writer::link(new moodle_url('/course/view.php',
                     array('id' => $quizinfo->courseid)), format_string($quizinfo->shortname)),
             html_writer::link(new moodle_url('/mod/quiz/view.php',
-                    array('id' => $quizinfo->name)), format_string($quizinfo->name)),
+                    array('q' => $quizinfo->id)), format_string($quizinfo->name)),
             $quizinfo->attemptcount,
             $quizinfo->questionattempts ? $quizinfo->questionattempts : 0,
         );
@@ -669,5 +669,5 @@ function tool_qeupgradehelper_get_quiz_for_upgrade() {
             JOIN {course} c ON c.id = quiz.course
             WHERE quiza.preview = 0 AND quiza.needsupgradetonewqe = 1
             GROUP BY quiz.id, quiz.name, c.shortname, c.id
-            ORDER BY quiza.timemodified DESC", array(), IGNORE_MULTIPLE);
+            ORDER BY MAX(quiza.timemodified) DESC", array(), IGNORE_MULTIPLE);
 }

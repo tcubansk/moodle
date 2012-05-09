@@ -41,11 +41,11 @@ if (!$course = $DB->get_record('course', array('id' => $id))) {
     print_error('invalidcourseid');
 }
 
-require_login($course->id, true);
+require_login($course, true);
 $PAGE->set_pagelayout('incourse');
 $context = get_context_instance(CONTEXT_COURSE, $course->id);
 
-add_to_log($course->id, 'wiki', 'view all', "index.php?id=$course->id", "");
+add_to_log($course->id, 'wiki', 'view', "index.php?id=".$id, "");
 
 /// Get all required stringswiki
 $strwikis = get_string("modulenameplural", "wiki");

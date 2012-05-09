@@ -28,6 +28,7 @@
 require_once(dirname(__FILE__) . '/../config.php');
 require_once($CFG->libdir . '/questionlib.php');
 require_once($CFG->libdir . '/adminlib.php');
+require_once($CFG->libdir . '/pluginlib.php');
 require_once($CFG->libdir . '/tablelib.php');
 
 // Check permissions.
@@ -39,6 +40,7 @@ admin_externalpage_setup('manageqbehaviours');
 $thispageurl = new moodle_url('/admin/qbehaviours.php');
 
 $behaviours = get_plugin_list('qbehaviour');
+$pluginmanager = plugin_manager::instance();
 
 // Get some data we will need - question counts and which types are needed.
 $counts = $DB->get_records_sql_menu("
@@ -50,20 +52,16 @@ foreach ($behaviours as $behaviour => $notused) {
     if (!array_key_exists($behaviour, $counts)) {
         $counts[$behaviour] = 0;
     }
-    $needed[$behaviour] = $counts[$behaviour] > 0;
+    $needed[$behaviour] = ($counts[$behaviour] > 0) ||
+            $pluginmanager->other_plugins_that_require('qbehaviour_' . $behaviour);
     $archetypal[$behaviour] = question_engine::is_behaviour_archetypal($behaviour);
-}
-
-foreach ($behaviours as $behaviour => $notused) {
-    foreach (question_engine::get_behaviour_required_behaviours($behaviour) as $reqbehaviour) {
-        $needed[$reqbehaviour] = true;
-    }
 }
 foreach ($counts as $behaviour => $count) {
     if (!array_key_exists($behaviour, $behaviours)) {
-        $counts['missingtype'] += $count;
+        $counts['missing'] += $count;
     }
 }
+$needed['missing'] = true;
 
 // Work of the correct sort order.
 $config = get_config('question');
@@ -181,7 +179,7 @@ if (($delete = optional_param('delete', '', PARAM_PLUGIN)) && confirm_sesskey())
         unset($disabledbehaviours[$key]);
         set_config('disabledbehaviours', implode(',', $disabledbehaviours), 'question');
     }
-    $behaviourorder = explode(',', $config->behavioursortorder);
+    $behaviourorder = array_keys($sortedbehaviours);
     if (($key = array_search($delete, $behaviourorder)) !== false) {
         unset($behaviourorder[$key]);
         set_config('behavioursortorder', implode(',', $behaviourorder), 'question');
@@ -193,6 +191,7 @@ if (($delete = optional_param('delete', '', PARAM_PLUGIN)) && confirm_sesskey())
     // Remove event handlers and dequeue pending events
     events_uninstall('qbehaviour_' . $delete);
 
+    $a = new stdClass();
     $a->behaviour = $behaviourname;
     $a->directory = get_plugin_directory('qbehaviour', $delete);
     echo $OUTPUT->box(get_string('qbehaviourdeletefiles', 'question', $a), 'generalbox', 'notice');
@@ -238,18 +237,19 @@ foreach ($sortedbehaviours as $behaviour => $behaviourname) {
     }
 
     // Other question types required by this one.
-    $requiredbehaviours = question_engine::get_behaviour_required_behaviours($behaviour);
-    if (!empty($requiredbehaviours)) {
-        $strrequiredbehaviours = array();
-        foreach ($requiredbehaviours as $required) {
-            $strrequiredbehaviours[] = $sortedbehaviours[$required];
+    $plugin = $pluginmanager->get_plugin_info('qbehaviour_' . $behaviour);
+    $required = $plugin->get_other_required_plugins();
+    if (!empty($required)) {
+        $strrequired = array();
+        foreach ($required as $component => $notused) {
+            $strrequired[] = $pluginmanager->plugin_name($component);
         }
-        $row[] = implode(', ', $strrequiredbehaviours);
+        $row[] = implode(', ', $strrequired);
     } else {
         $row[] = '';
     }
 
-    // Are people allowed to create new questions of this type?
+    // Are people allowed to select this behaviour?
     $rowclass = '';
     if ($archetypal[$behaviour]) {
         $enabled = array_search($behaviour, $disabledbehaviours) === false;

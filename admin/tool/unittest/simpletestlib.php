@@ -82,8 +82,8 @@ function recurseFolders($path, $callback, $fileregexp = '/.*/', $exclude = false
 class IgnoreWhitespaceExpectation extends SimpleExpectation {
     var $expect;
 
-    function IgnoreWhitespaceExpectation($content, $message = '%s') {
-        $this->SimpleExpectation($message);
+    function __construct($content, $message = '%s') {
+        parent::__construct($message);
         $this->expect=$this->normalise($content);
     }
 
@@ -111,8 +111,8 @@ class IgnoreWhitespaceExpectation extends SimpleExpectation {
 class ArraysHaveSameValuesExpectation extends SimpleExpectation {
     var $expect;
 
-    function ArraysHaveSameValuesExpectation($expected, $message = '%s') {
-        $this->SimpleExpectation($message);
+    function __construct($expected, $message = '%s') {
+        parent::__construct($message);
         if (!is_array($expected)) {
             trigger_error('Attempt to create an ArraysHaveSameValuesExpectation ' .
                     'with an expected value that is not an array.');
@@ -149,8 +149,8 @@ class ArraysHaveSameValuesExpectation extends SimpleExpectation {
 class CheckSpecifiedFieldsExpectation extends SimpleExpectation {
     var $expect;
 
-    function CheckSpecifiedFieldsExpectation($expected, $message = '%s') {
-        $this->SimpleExpectation($message);
+    function __construct($expected, $message = '%s') {
+        parent::__construct($message);
         if (!is_object($expected)) {
             trigger_error('Attempt to create a CheckSpecifiedFieldsExpectation ' .
                     'with an expected value that is not an object.');
@@ -651,7 +651,7 @@ class UnitTestCaseUsingDatabase extends UnitTestCase {
         }
 
         // Only do this after the above text.
-        parent::UnitTestCase($label);
+        parent::__construct($label);
 
         // Create the test DB instance.
         $this->realdb = $DB;
@@ -743,6 +743,52 @@ class UnitTestCaseUsingDatabase extends UnitTestCase {
             $USER->id = $this->realuserid;
             $this->realuserid = null;
         }
+    }
+
+    /**
+     * Recreates the system context record in the 'context' table
+     *
+     * Once we have switched to test db, if we have recreated the
+     * context table and it's empty, it may be necessary to manually
+     * create the system context record if unittests are going to
+     * play with contexts.
+     *
+     * This is needed because the context_system::instance() method
+     * is exceptional and always requires the record to exist, never
+     * creating it :-( No problem for other contexts.
+     *
+     * Altenatively one complete install can be done, like
+     * {@see accesslib_test::test_everything_in_accesslib} does, but that's
+     * to much for some tests not requiring all the roles/caps/friends
+     * to be present.
+     *
+     * Ideally some day we'll move a lot of these UnitTests to a complete
+     * cloned installation with real data to play with. That day this
+     * won't be necessary anymore.
+     */
+    protected function create_system_context_record() {
+        global $DB;
+
+        // If, for any reason, the record exists, do nothing
+        if ($DB->record_exists('context', array('contextlevel'=>CONTEXT_SYSTEM))) {
+            return;
+        }
+
+        $record = new stdClass();
+        $record->contextlevel = CONTEXT_SYSTEM;
+        $record->instanceid   = 0;
+        $record->depth        = 1;
+        $record->path         = null;
+        if (defined('SYSCONTEXTID')) {
+            $record->id = SYSCONTEXTID;
+            $DB->import_record('context', $record);
+            $DB->get_manager()->reset_sequence('context');
+        } else {
+            $record->id = $DB->insert_record('context', $record);
+        }
+        // fix path
+        $record->path  = '/'.$record->id;
+        $DB->set_field('context', 'path', $record->path, array('id' => $record->id));
     }
 
     /**
@@ -928,7 +974,7 @@ class FakeDBUnitTestCase extends UnitTestCase {
             return;
         }
 
-        parent::UnitTestCase($label);
+        parent::__construct($label);
         // MDL-16483 Get PKs and save data to text file
 
         $this->pkfile = $CFG->dataroot.'/testtablespks.csv';

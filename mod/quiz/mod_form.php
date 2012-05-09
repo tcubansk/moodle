@@ -42,13 +42,13 @@ class mod_quiz_mod_form extends moodleform_mod {
 
     public function __construct($current, $section, $cm, $course) {
         self::$reviewfields = array(
-            'attempt' => get_string('theattempt', 'quiz'),
-            'correctness' => get_string('whethercorrect', 'question'),
-            'marks' => get_string('marks', 'question'),
-            'specificfeedback' => get_string('specificfeedback', 'question'),
-            'generalfeedback' => get_string('generalfeedback', 'question'),
-            'rightanswer' => get_string('rightanswer', 'question'),
-            'overallfeedback' => get_string('overallfeedback', 'quiz'),
+            'attempt'          => array('theattempt', 'quiz'),
+            'correctness'      => array('whethercorrect', 'question'),
+            'marks'            => array('marks', 'quiz'),
+            'specificfeedback' => array('specificfeedback', 'question'),
+            'generalfeedback'  => array('generalfeedback', 'question'),
+            'rightanswer'      => array('rightanswer', 'question'),
+            'overallfeedback'  => array('reviewoverallfeedback', 'quiz'),
         );
         parent::__construct($current, $section, $cm, $course);
     }
@@ -73,6 +73,9 @@ class mod_quiz_mod_form extends moodleform_mod {
         // Introduction.
         $this->add_intro_editor(false, get_string('introduction', 'quiz'));
 
+        //-------------------------------------------------------------------------------
+        $mform->addElement('header', 'timing', get_string('timing', 'quiz'));
+
         // Open and close dates.
         $mform->addElement('date_time_selector', 'timeopen', get_string('quizopen', 'quiz'),
                 array('optional' => true, 'step' => 1));
@@ -87,6 +90,31 @@ class mod_quiz_mod_form extends moodleform_mod {
         $mform->addHelpButton('timelimit', 'timelimit', 'quiz');
         $mform->setAdvanced('timelimit', $quizconfig->timelimit_adv);
         $mform->setDefault('timelimit', $quizconfig->timelimit);
+
+        // What to do with overdue attempts.
+        $mform->addElement('select', 'overduehandling', get_string('overduehandling', 'quiz'),
+                quiz_get_overdue_handling_options());
+        $mform->setAdvanced('overduehandling', $quizconfig->overduehandling_adv);
+        $mform->setDefault('overduehandling', $quizconfig->overduehandling);
+        // TODO Formslib does OR logic on disableif, and we need AND logic here.
+        // $mform->disabledIf('overduehandling', 'timelimit', 'eq', 0);
+        // $mform->disabledIf('overduehandling', 'timeclose', 'eq', 0);
+
+        // Grace period time.
+        $mform->addElement('duration', 'graceperiod', get_string('graceperiod', 'quiz'),
+                array('optional' => true));
+        $mform->addHelpButton('graceperiod', 'graceperiod', 'quiz');
+        $mform->setAdvanced('graceperiod', $quizconfig->graceperiod_adv);
+        $mform->setDefault('graceperiod', $quizconfig->graceperiod);
+        $mform->disabledIf('graceperiod', 'overduehandling', 'neq', 'graceperiod');
+
+        //-------------------------------------------------------------------------------
+        // Grade settings
+        $this->standard_grading_coursemodule_elements();
+
+        $mform->removeElement('grade');
+        $mform->addElement('hidden', 'grade', $quizconfig->maximumgrade);
+        $mform->setType('grade', PARAM_NUMBER);
 
         // Number of attempts.
         $attemptoptions = array('0' => get_string('unlimited'));
@@ -105,14 +133,6 @@ class mod_quiz_mod_form extends moodleform_mod {
         $mform->setAdvanced('grademethod', $quizconfig->grademethod_adv);
         $mform->setDefault('grademethod', $quizconfig->grademethod);
         $mform->disabledIf('grademethod', 'attempts', 'eq', 1);
-
-        //-------------------------------------------------------------------------------
-        // Grade settings
-        $this->standard_grading_coursemodule_elements();
-
-        $mform->removeElement('grade');
-        $mform->addElement('hidden', 'grade', $quizconfig->maximumgrade);
-        $mform->setType('grade', PARAM_NUMBER);
 
         //-------------------------------------------------------------------------------
         $mform->addElement('header', 'layouthdr', get_string('layout', 'quiz'));
@@ -154,6 +174,13 @@ class mod_quiz_mod_form extends moodleform_mod {
         $mform->addHelpButton('questionsperpagegrp', 'newpage', 'quiz');
         $mform->setAdvanced('questionsperpagegrp', $quizconfig->questionsperpage_adv);
 
+        // Navigation method
+        $mform->addElement('select', 'navmethod', get_string('navmethod', 'quiz'),
+                quiz_get_navigation_options());
+        $mform->addHelpButton('navmethod', 'navmethod', 'quiz');
+        $mform->setAdvanced('navmethod', $quizconfig->navmethod_adv);
+        $mform->setDefault('navmethod', $quizconfig->navmethod);
+
         //-------------------------------------------------------------------------------
         $mform->addElement('header', 'interactionhdr', get_string('questionbehaviour', 'quiz'));
 
@@ -190,7 +217,7 @@ class mod_quiz_mod_form extends moodleform_mod {
 
         // Review options.
         $this->add_review_options_group($mform, $quizconfig, 'during',
-                mod_quiz_display_options::DURING);
+                mod_quiz_display_options::DURING, true);
         $this->add_review_options_group($mform, $quizconfig, 'immediately',
                 mod_quiz_display_options::IMMEDIATELY_AFTER);
         $this->add_review_options_group($mform, $quizconfig, 'open',
@@ -251,7 +278,7 @@ class mod_quiz_mod_form extends moodleform_mod {
         //-------------------------------------------------------------------------------
         $mform->addElement('header', 'security', get_string('extraattemptrestrictions', 'quiz'));
 
-        // Enforced time delay between quiz attempts.
+        // Require password to begin quiz attempt.
         $mform->addElement('passwordunmask', 'quizpassword', get_string('requirepassword', 'quiz'));
         $mform->setType('quizpassword', PARAM_TEXT);
         $mform->addHelpButton('quizpassword', 'requirepassword', 'quiz');
@@ -282,16 +309,14 @@ class mod_quiz_mod_form extends moodleform_mod {
         $mform->disabledIf('delay2', 'attempts', 'eq', 2);
 
         // 'Secure' window.
-        $options = array(
-                    0 => get_string('none', 'quiz'),
-                    1 => get_string('popupwithjavascriptsupport', 'quiz'));
-        if (!empty($CFG->enablesafebrowserintegration)) {
-            $options[2] = get_string('requiresafeexambrowser', 'quiz');
-        }
-        $mform->addElement('select', 'popup', get_string('browsersecurity', 'quiz'), $options);
-        $mform->addHelpButton('popup', 'browsersecurity', 'quiz');
-        $mform->setAdvanced('popup', $quizconfig->popup_adv);
-        $mform->setDefault('popup', $quizconfig->popup);
+        $mform->addElement('select', 'browsersecurity', get_string('browsersecurity', 'quiz'),
+                quiz_access_manager::get_browser_security_choices());
+        $mform->addHelpButton('browsersecurity', 'browsersecurity', 'quiz');
+        $mform->setAdvanced('browsersecurity', $quizconfig->browsersecurity_adv);
+        $mform->setDefault('browsersecurity', $quizconfig->browsersecurity);
+
+        // Any other rule plugins.
+        quiz_access_manager::add_settings_form_fields($this, $mform);
 
         //-------------------------------------------------------------------------------
         $mform->addElement('header', 'overallfeedbackhdr', get_string('overallfeedback', 'quiz'));
@@ -312,10 +337,10 @@ class mod_quiz_mod_form extends moodleform_mod {
 
         $repeatarray = array();
         $repeatedoptions = array();
-        $repeatarray[] = MoodleQuickForm::createElement('editor', 'feedbacktext',
+        $repeatarray[] = $mform->createElement('editor', 'feedbacktext',
                 get_string('feedback', 'quiz'), null, array('maxfiles' => EDITOR_UNLIMITED_FILES,
                         'noclean' => true, 'context' => $this->context));
-        $repeatarray[] = MoodleQuickForm::createElement('text', 'feedbackboundaries',
+        $repeatarray[] = $mform->createElement('text', 'feedbackboundaries',
                 get_string('gradeboundary', 'quiz'), array('size' => 10));
         $repeatedoptions['feedbacktext']['type'] = PARAM_RAW;
         $repeatedoptions['feedbackboundaries']['type'] = PARAM_RAW;
@@ -333,12 +358,12 @@ class mod_quiz_mod_form extends moodleform_mod {
                 get_string('addmoreoverallfeedbacks', 'quiz'), true);
 
         // Put some extra elements in before the button
-        $mform->insertElementBefore(MoodleQuickForm::createElement('editor',
+        $mform->insertElementBefore($mform->createElement('editor',
                 "feedbacktext[$nextel]", get_string('feedback', 'quiz'), null,
                 array('maxfiles' => EDITOR_UNLIMITED_FILES, 'noclean' => true,
                       'context' => $this->context)),
                 'boundary_add_fields');
-        $mform->insertElementBefore(MoodleQuickForm::createElement('static',
+        $mform->insertElementBefore($mform->createElement('static',
                 'gradeboundarystatic2', get_string('gradeboundary', 'quiz'), '0%'),
                 'boundary_add_fields');
 
@@ -357,9 +382,19 @@ class mod_quiz_mod_form extends moodleform_mod {
         $this->add_action_buttons();
     }
 
-    protected function add_review_options_group($mform, $quizconfig, $whenname, $when) {
+    protected function add_review_options_group($mform, $quizconfig, $whenname,
+            $when, $withhelp = false) {
+        global $OUTPUT;
+
         $group = array();
-        foreach (self::$reviewfields as $field => $label) {
+        foreach (self::$reviewfields as $field => $string) {
+            list($identifier, $component) = $string;
+
+            $label = get_string($identifier, $component);
+            if ($withhelp) {
+                $label .= ' ' . $OUTPUT->help_icon($identifier, $component);
+            }
+
             $group[] = $mform->createElement('checkbox', $field . $whenname, '', $label);
         }
         $mform->addGroup($group, $whenname . 'optionsgrp',
@@ -448,6 +483,14 @@ class mod_quiz_mod_form extends moodleform_mod {
         if (isset($toform['password'])) {
             $toform['quizpassword'] = $toform['password'];
             unset($toform['password']);
+        }
+
+        // Load any settings belonging to the access rules.
+        if (!empty($toform['instance'])) {
+            $accesssettings = quiz_access_manager::load_settings($toform['instance']);
+            foreach ($accesssettings as $name => $value) {
+                $toform[$name] = $value;
+            }
         }
     }
 

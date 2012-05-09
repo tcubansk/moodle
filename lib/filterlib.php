@@ -136,6 +136,7 @@ class filter_manager {
             return new $filterclassname($context, $localconfig);
         }
 
+        // TODO: deprecated since 2.2, will be out in 2.3, see MDL-29996
         $legacyfunctionname = basename($filtername) . '_filter';
         if (function_exists($legacyfunctionname)) {
             return new legacy_filter($legacyfunctionname, $context, $localconfig);
@@ -370,6 +371,8 @@ abstract class moodle_text_filter {
  * moodle_text_filter implementation that encapsulates an old-style filter that
  * only defines a function, not a class.
  *
+ * @deprecated since 2.2, see MDL-29995
+ * @todo will be out in 2.3, see MDL-29996
  * @package    core
  * @subpackage filter
  * @copyright  1999 onwards Martin Dougiamas  {@link http://moodle.com}
@@ -475,6 +478,7 @@ class filterobject {
  * @return string the human-readable name for this filter.
  */
 function filter_get_name($filter) {
+    // TODO: should we be using pluginname here instead? , see MDL-29998
     list($type, $filter) = explode('/', $filter);
     switch ($type) {
         case 'filter':
@@ -485,6 +489,7 @@ function filter_get_name($filter) {
             }
             // Fall through to try the legacy location.
 
+        // TODO: deprecated since 2.2, will be out in 2.3, see MDL-29996
         case 'mod':
             $strfiltername = get_string('filtername', $filter);
             if (substr($strfiltername, 0, 2) == '[[') {
@@ -508,10 +513,16 @@ function filter_get_name($filter) {
 function filter_get_all_installed() {
     global $CFG;
     $filternames = array();
+    // TODO: deprecated since 2.2, will be out in 2.3, see MDL-29996
     $filterlocations = array('mod', 'filter');
     foreach ($filterlocations as $filterlocation) {
+        // TODO: move get_list_of_plugins() to get_plugin_list()
         $filters = get_list_of_plugins($filterlocation);
         foreach ($filters as $filter) {
+            // MDL-29994 - Ignore mod/data and mod/glossary filters forever, this will be out in 2.3
+            if ($filterlocation == 'mod' && ($filter == 'data' || $filter == 'glossary')) {
+                continue;
+            }
             $path = $filterlocation . '/' . $filter;
             if (is_readable($CFG->dirroot . '/' . $path . '/filter.php')) {
                 $strfiltername = filter_get_name($path);
@@ -818,6 +829,10 @@ function filter_get_all_local_settings($contextid) {
 function filter_get_active_in_context($context) {
     global $DB, $FILTERLIB_PRIVATE;
 
+    if (!isset($FILTERLIB_PRIVATE)) {
+        $FILTERLIB_PRIVATE = new stdClass();
+    }
+
     // Use cache (this is a within-request cache only) if available. See
     // function filter_preload_activities.
     if (isset($FILTERLIB_PRIVATE->active) &&
@@ -840,6 +855,7 @@ function filter_get_active_in_context($context) {
          ) active
          LEFT JOIN {filter_config} fc ON fc.filter = active.filter AND fc.contextid = $context->id
          ORDER BY active.sortorder";
+    //TODO: remove sql_cast_2signed() once we do not support upgrade from Moodle 2.2
     $rs = $DB->get_recordset_sql($sql);
 
     // Masssage the data into the specified format to return.
@@ -865,6 +881,10 @@ function filter_get_active_in_context($context) {
  */
 function filter_preload_activities(course_modinfo $modinfo) {
     global $DB, $FILTERLIB_PRIVATE;
+
+    if (!isset($FILTERLIB_PRIVATE)) {
+        $FILTERLIB_PRIVATE = new stdClass();
+    }
 
     // Don't repeat preload
     if (!isset($FILTERLIB_PRIVATE->preloaded)) {
@@ -1328,13 +1348,13 @@ function filter_remove_duplicates($linkarray) {
         if ($filterobject->casesensitive) {
             $exists = in_array($filterobject->phrase, $concepts);
         } else {
-            $exists = in_array(moodle_strtolower($filterobject->phrase), $lconcepts);
+            $exists = in_array(textlib::strtolower($filterobject->phrase), $lconcepts);
         }
 
         if (!$exists) {
             $cleanlinks[] = $filterobject;
             $concepts[] = $filterobject->phrase;
-            $lconcepts[] = moodle_strtolower($filterobject->phrase);
+            $lconcepts[] = textlib::strtolower($filterobject->phrase);
         }
     }
 

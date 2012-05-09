@@ -17,10 +17,9 @@
 /**
  * Base class for quiz report plugins.
  *
- * @package    mod
- * @subpackage quiz
- * @copyright  1999 onwards Martin Dougiamas and others {@link http://moodle.com}
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @package   mod_quiz
+ * @copyright 1999 onwards Martin Dougiamas and others {@link http://moodle.com}
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 
@@ -39,10 +38,12 @@ defined('MOODLE_INTERNAL') || die();
  * to itself - all these will also be globally available.  You must
  * pass "id=$cm->id" or q=$quiz->id", and "mode=reportname".
  *
- * @copyright  1999 onwards Martin Dougiamas and others {@link http://moodle.com}
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @copyright 1999 onwards Martin Dougiamas and others {@link http://moodle.com}
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 abstract class quiz_default_report {
+    const NO_GROUPS_ALLOWED = -2;
+
     /**
      * Override this function to displays the report.
      * @param $cm the course-module for this quiz.
@@ -51,12 +52,40 @@ abstract class quiz_default_report {
      */
     public abstract function display($cm, $course, $quiz);
 
+    /**
+     * Initialise some parts of $PAGE and start output.
+     *
+     * @param object $cm the course_module information.
+     * @param object $coures the course settings.
+     * @param object $quiz the quiz settings.
+     * @param string $reportmode the report name.
+     */
     public function print_header_and_tabs($cm, $course, $quiz, $reportmode = 'overview') {
         global $PAGE, $OUTPUT;
 
-        // Print the page header
+        // Print the page header.
         $PAGE->set_title(format_string($quiz->name));
         $PAGE->set_heading($course->fullname);
         echo $OUTPUT->header();
+    }
+
+    /**
+     * Get the current group for the user user looking at the report.
+     *
+     * @param object $cm the course_module information.
+     * @param object $coures the course settings.
+     * @param context $context the quiz context.
+     * @return int the current group id, if applicable. 0 for all users,
+     *      NO_GROUPS_ALLOWED if the user cannot see any group.
+     */
+    public function get_current_group($cm, $course, $context) {
+        $groupmode = groups_get_activity_groupmode($cm, $course);
+        $currentgroup = groups_get_activity_group($cm, true);
+
+        if ($groupmode == SEPARATEGROUPS && !$currentgroup && !has_capability('moodle/site:accessallgroups', $context)) {
+            $currentgroup = self::NO_GROUPS_ALLOWED;
+        }
+
+        return $currentgroup;
     }
 }

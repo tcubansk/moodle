@@ -28,6 +28,8 @@ define('SCORM_TYPE_LOCALSYNC', 'localsync');
 define('SCORM_TYPE_EXTERNAL', 'external');
 /** SCORM_TYPE_IMSREPOSITORY = imsrepository */
 define('SCORM_TYPE_IMSREPOSITORY', 'imsrepository');
+/** SCORM_TYPE_AICCURL = external AICC url */
+define('SCORM_TYPE_AICCURL', 'aiccurl');
 
 define('SCORM_TOC_SIDE', 0);
 define('SCORM_TOC_HIDDEN', 1);
@@ -38,6 +40,31 @@ define('SCORM_TOC_DISABLED', 3);
 define('SCORM_12', 1);
 define('SCORM_13', 2);
 define('SCORM_AICC', 3);
+
+/**
+ * Return an array of status options
+ *
+ * Optionally with translated strings
+ *
+ * @param   bool    $with_strings   (optional)
+ * @return  array
+ */
+function scorm_status_options($with_strings = false) {
+    // Id's are important as they are bits
+    $options = array(
+        2 => 'passed',
+        4 => 'completed'
+    );
+
+    if ($with_strings) {
+        foreach ($options as $key => $value) {
+            $options[$key] = get_string('completionstatus_'.$value, 'scorm');
+        }
+    }
+
+    return $options;
+}
+
 
 /**
  * Given an object containing all the necessary data,
@@ -103,13 +130,12 @@ function scorm_add_instance($scorm, $mform=null) {
 
     } else if ($record->scormtype === SCORM_TYPE_LOCALSYNC) {
         $record->reference = $scorm->packageurl;
-
     } else if ($record->scormtype === SCORM_TYPE_EXTERNAL) {
         $record->reference = $scorm->packageurl;
-
     } else if ($record->scormtype === SCORM_TYPE_IMSREPOSITORY) {
         $record->reference = $scorm->packageurl;
-
+    } else if ($record->scormtype === SCORM_TYPE_AICCURL) {
+        $record->reference = $scorm->packageurl;
     } else {
         return false;
     }
@@ -184,7 +210,8 @@ function scorm_update_instance($scorm, $mform=null) {
 
     } else if ($scorm->scormtype === SCORM_TYPE_IMSREPOSITORY) {
         $scorm->reference = $scorm->packageurl;
-
+    } else if ($scorm->scormtype === SCORM_TYPE_AICCURL) {
+        $scorm->reference = $scorm->packageurl;
     } else {
         return false;
     }
@@ -500,9 +527,16 @@ function scorm_cron () {
 
         mtrace('Updating scorm packages which require daily update');//We are updating
 
-        $scormsupdate = $DB->get_records('scorm', array('updatefreq'=>UPDATE_EVERYDAY));
+        $scormsupdate = $DB->get_records_select('scorm', 'updatefreq = ? AND scormtype <> ?', array(SCORM_UPDATE_EVERYDAY, SCORM_TYPE_LOCAL));
         foreach ($scormsupdate as $scormupdate) {
             scorm_parse($scormupdate, true);
+        }
+
+        //now clear out AICC session table with old session data
+        $cfg_scorm = get_config('scorm');
+        if (!empty($cfg_scorm->allowaicchacp)) {
+            $expiretime = time() - ($cfg_scorm->aicchacpkeepsessiondata*24*60*60);
+            $DB->delete_records_select('scorm_aicc_session', 'timemodified < ?', array($expiretime));
         }
     }
 
@@ -551,8 +585,7 @@ function scorm_get_user_grades($scorm, $userid=0) {
 /**
  * Update grades in central gradebook
  *
- * @global stdClass
- * @global object
+ * @category grade
  * @param object $scorm
  * @param int $userid specific user only, 0 mean all
  * @param bool $nullifnone
@@ -608,8 +641,7 @@ function scorm_upgrade_grades() {
 /**
  * Update/create grade item for given scorm
  *
- * @global stdClass
- * @global object
+ * @category grade
  * @uses GRADE_TYPE_VALUE
  * @uses GRADE_TYPE_NONE
  * @param object $scorm object with extra cmidnumber
@@ -647,13 +679,25 @@ function scorm_grade_item_update($scorm, $grades=null) {
         $grades = null;
     }
 
+    // Update activity completion if applicable
+    // Get course info
+    $course = new object();
+    $course->id = $scorm->course;
+
+    $cm = get_coursemodule_from_instance('scorm', $scorm->id, $course->id);
+    // CM will be false if this has been run from scorm_add_instance
+    if ($cm) {
+        $completion = new completion_info($course);
+        $completion->update_state($cm, COMPLETION_COMPLETE);
+    }
+
     return grade_update('mod/scorm', $scorm->course, 'mod', 'scorm', $scorm->id, 0, $grades, $params);
 }
 
 /**
  * Delete grade item for given scorm
  *
- * @global stdClass
+ * @category grade
  * @param object $scorm object
  * @return object grade_item
  */
@@ -810,16 +854,18 @@ function scorm_get_file_areas($course, $cm, $context) {
 /**
  * File browsing support for SCORM file areas
  *
- * @param stdclass $browser
- * @param stdclass $areas
- * @param stdclass $course
- * @param stdclass $cm
- * @param stdclass $context
- * @param string $filearea
- * @param int $itemid
- * @param string $filepath
- * @param string $filename
- * @return stdclass file_info instance or null if not found
+ * @package  mod_scorm
+ * @category files
+ * @param file_browser $browser file browser instance
+ * @param array $areas file areas
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param int $itemid item ID
+ * @param string $filepath file path
+ * @param string $filename file name
+ * @return file_info instance or null if not found
  */
 function scorm_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {
     global $CFG;
@@ -873,15 +919,18 @@ function scorm_get_file_info($browser, $areas, $course, $cm, $context, $filearea
 /**
  * Serves scorm content, introduction images and packages. Implements needed access control ;-)
  *
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ * @package  mod_scorm
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - just send the file
  */
-function scorm_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function scorm_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -912,11 +961,15 @@ function scorm_pluginfile($course, $cm, $context, $filearea, $args, $forcedownlo
 
     $fs = get_file_storage();
     if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
+        if ($filearea === 'content') { //return file not found straight away to improve performance.
+            send_header_404();
+            die;
+        }
         return false;
     }
 
     // finally send the file
-    send_stored_file($file, $lifetime, 0, false);
+    send_stored_file($file, $lifetime, 0, false, $options);
 }
 
 /**
@@ -925,6 +978,7 @@ function scorm_pluginfile($course, $cm, $context, $filearea, $args, $forcedownlo
  * @uses FEATURE_GROUPMEMBERSONLY
  * @uses FEATURE_MOD_INTRO
  * @uses FEATURE_COMPLETION_TRACKS_VIEWS
+ * @uses FEATURE_COMPLETION_HAS_RULES
  * @uses FEATURE_GRADE_HAS_GRADE
  * @uses FEATURE_GRADE_OUTCOMES
  * @param string $feature FEATURE_xx constant for requested feature
@@ -937,6 +991,7 @@ function scorm_supports($feature) {
         case FEATURE_GROUPMEMBERSONLY:        return true;
         case FEATURE_MOD_INTRO:               return true;
         case FEATURE_COMPLETION_TRACKS_VIEWS: return true;
+        case FEATURE_COMPLETION_HAS_RULES:    return true;
         case FEATURE_GRADE_HAS_GRADE:         return true;
         case FEATURE_GRADE_OUTCOMES:          return true;
         case FEATURE_BACKUP_MOODLE2:          return true;
@@ -944,26 +999,6 @@ function scorm_supports($feature) {
 
         default: return null;
     }
-}
-
-/**
- * This function extends the global navigation for the site.
- * It is important to note that you should not rely on PAGE objects within this
- * body of code as there is no guarantee that during an AJAX request they are
- * available
- *
- * @param navigation_node $navigation The scorm node within the global navigation
- * @param stdClass $course The course object returned from the DB
- * @param stdClass $module The module object returned from the DB
- * @param stdClass $cm The course module instance returned from the DB
- */
-function scorm_extend_navigation($navigation, $course, $module, $cm) {
-    /**
-     * This is currently just a stub so that it can be easily expanded upon.
-     * When expanding just remove this comment and the line below and then add
-     * you content.
-     */
-    $navigation->nodetype = navigation_node::NODETYPE_LEAF;
 }
 
 /**
@@ -1124,4 +1159,102 @@ function scorm_version_check($scormversion, $version='') {
         }
     }
     return false;
+}
+
+/**
+ * Obtains the automatic completion state for this scorm based on any conditions
+ * in scorm settings.
+ *
+ * @param object $course Course
+ * @param object $cm Course-module
+ * @param int $userid User ID
+ * @param bool $type Type of comparison (or/and; can be used as return value if no conditions)
+ * @return bool True if completed, false if not. (If no conditions, then return
+ *   value depends on comparison type)
+ */
+function scorm_get_completion_state($course, $cm, $userid, $type) {
+    global $DB;
+
+    $result = $type;
+
+    // Get scorm
+    if (!$scorm = $DB->get_record('scorm', array('id' => $cm->instance))) {
+        print_error('cannotfindscorm');
+    }
+
+    // Get user's tracks data
+    $tracks = $DB->get_records_sql(
+        "
+        SELECT
+            id,
+            element,
+            value
+        FROM
+            {scorm_scoes_track}
+        WHERE
+            scormid = ?
+        AND userid = ?
+        AND element IN
+        (
+            'cmi.core.lesson_status',
+            'cmi.completion_status',
+            'cmi.success_status',
+            'cmi.core.score.raw',
+            'cmi.score.raw'
+        )
+        ",
+        array($scorm->id, $userid)
+    );
+
+    if (!$tracks) {
+        return completion_info::aggregate_completion_states($type, $result, false);
+    }
+
+    // Check for status
+    if ($scorm->completionstatusrequired !== null) {
+
+        // Get status
+        $statuses = array_flip(scorm_status_options());
+        $nstatus = 0;
+
+        foreach ($tracks as $track) {
+            if (!in_array($track->element, array('cmi.core.lesson_status', 'cmi.completion_status', 'cmi.success_status'))) {
+                continue;
+            }
+
+            if (array_key_exists($track->value, $statuses)) {
+                $nstatus |= $statuses[$track->value];
+            }
+        }
+
+        if ($scorm->completionstatusrequired & $nstatus) {
+            return completion_info::aggregate_completion_states($type, $result, true);
+        } else {
+            return completion_info::aggregate_completion_states($type, $result, false);
+        }
+
+    }
+
+    // Check for score
+    if ($scorm->completionscorerequired !== null) {
+        $maxscore = -1;
+
+        foreach ($tracks as $track) {
+            if (!in_array($track->element, array('cmi.core.score.raw', 'cmi.score.raw'))) {
+                continue;
+            }
+
+            if (strlen($track->value) && floatval($track->value) >= $maxscore) {
+                $maxscore = floatval($track->value);
+            }
+        }
+
+        if ($scorm->completionscorerequired <= $maxscore) {
+            return completion_info::aggregate_completion_states($type, $result, true);
+        } else {
+            return completion_info::aggregate_completion_states($type, $result, false);
+        }
+    }
+
+    return $result;
 }

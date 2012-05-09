@@ -45,21 +45,10 @@ class xmldb_key extends xmldb_object {
         $this->set_attributes($type, $fields, $reftable, $reffields);
     }
 
-/// TODO: Delete for 2.1 (deprecated in 2.0).
-/// Deprecated API starts here
-
-    function setAttributes($type, $fields, $reftable=null, $reffields=null) {
-
-        debugging('XMLDBKey->setAttributes() has been deprecated in Moodle 2.0. Will be out in Moodle 2.1. Please use xmldb_key->set_attributes() instead.', DEBUG_DEVELOPER);
-
-        return $this->set_attributes($type, $fields, $reftable, $reffields);
-    }
-/// Deprecated API ends here
-
     /**
      * Set all the attributes of one xmldb_key
      *
-     * @param string type XMLDB_KEY_PRIMARY, XMLDB_KEY_UNIQUE, XMLDB_KEY_FOREIGN
+     * @param string type XMLDB_KEY_[PRIMARY|UNIQUE|FOREIGN|FOREIGN_UNIQUE]
      * @param array fields an array of fieldnames to build the key over
      * @param string reftable name of the table the FK points to or null
      * @param array reffields an array of fieldnames in the FK table or null
@@ -418,6 +407,9 @@ class xmldb_key extends xmldb_object {
             case XMLDB_KEY_FOREIGN:
                 $result .= 'XMLDB_KEY_FOREIGN' . ', ';
                 break;
+            case XMLDB_KEY_FOREIGN_UNIQUE:
+                $result .= 'XMLDB_KEY_FOREIGN_UNIQUE' . ', ';
+                break;
         }
     /// The fields
         $keyfields = $this->getFields();
@@ -427,7 +419,8 @@ class xmldb_key extends xmldb_object {
             $result .= 'null';
         }
     /// The FKs attributes
-        if ($this->getType() == XMLDB_KEY_FOREIGN) {
+        if ($this->getType() == XMLDB_KEY_FOREIGN ||
+            $this->getType() == XMLDB_KEY_FOREIGN_UNIQUE) {
         /// The reftable
             $reftable = $this->getRefTable();
             if (!empty($reftable)) {
@@ -465,14 +458,3 @@ class xmldb_key extends xmldb_object {
         return $o;
     }
 }
-
-/// TODO: Delete for 2.1 (deprecated in 2.0).
-/// Deprecated API starts here
-class XMLDBKey extends xmldb_key {
-
-    function __construct($name) {
-        parent::__construct($name);
-    }
-
-}
-/// Deprecated API ends here

@@ -84,15 +84,21 @@ class repository_picasa extends repository {
 
         $ret = array();
         $ret['dynload'] = true;
+        $ret['manage'] = google_picasa::MANAGE_URL;
         $ret['list'] = $picasa->get_file_list($path);
+        $ret['path'] = array((object)array('name'=>get_string('home'), 'path' => ''));
+        if ($path) {
+            $ret['path'][] = (object)array('name'=>$picasa->get_last_album_name(), 'path' => $path);
+        }
         return $ret;
     }
 
-    public function search($query){
+    public function search($search_text, $page = 0) {
         $picasa = new google_picasa(new google_authsub($this->subauthtoken));
 
         $ret = array();
-        $ret['list'] =  $picasa->do_photo_search($query);
+        $ret['manage'] = google_picasa::MANAGE_URL;
+        $ret['list'] =  $picasa->do_photo_search($search_text);
         return $ret;
     }
 

@@ -1,5 +1,4 @@
 <?php
-
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -16,8 +15,11 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * File in which the user_report class is defined.
- * @package gradebook
+ * Definition of the grade_user_report class is defined
+ *
+ * @package gradereport_user
+ * @copyright 2007 Nicolas Connault
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 require_once($CFG->dirroot . '/grade/report/lib.php');
@@ -31,7 +33,7 @@ define("GRADE_REPORT_USER_SHOW_HIDDEN", 2);
 /**
  * Class providing an API for the user report building and displaying.
  * @uses grade_report
- * @package gradebook
+ * @package gradereport_user
  */
 class grade_report_user extends grade_report {
 
@@ -304,11 +306,13 @@ class grade_report_user extends grade_report {
         $depth = $element['depth'];
         $grade_object = $element['object'];
         $eid = $grade_object->id;
+        $element['userid'] = $this->user->id;
         $fullname = $this->gtree->get_element_header($element, true, true, true);
         $data = array();
         $hidden = '';
         $excluded = '';
         $class = '';
+        $classfeedback = '';
 
         // If this is a hidden grade category, hide it completely from the user
         if ($type == 'category' && $grade_object->is_hidden() && !$this->canviewhidden && (
@@ -343,6 +347,17 @@ class grade_report_user extends grade_report {
                     ($this->showhiddenitems == GRADE_REPORT_USER_HIDE_UNTIL && !$grade_grade->is_hiddenuntil()))) {
                 // return false;
             } else {
+                // The grade object can be marked visible but still be hidden
+                // if "enablegroupmembersonly" is on and its an activity assigned to a grouping the user is not in
+                if (!empty($grade_object->itemmodule) && !empty($grade_object->iteminstance)) {
+                    $instances = $this->gtree->modinfo->get_instances();
+                    if (!empty($instances[$grade_object->itemmodule][$grade_object->iteminstance])) {
+                        $cm = $instances[$grade_object->itemmodule][$grade_object->iteminstance];
+                        if (!$cm->uservisible) {
+                            return false;
+                        }
+                    }
+                }
                 /// Excluded Item
                 if ($grade_grade->is_excluded()) {
                     $fullname .= ' ['.get_string('excluded', 'grades').']';
@@ -365,6 +380,10 @@ class grade_report_user extends grade_report {
                 /// Actual Grade
                 $gradeval = $grade_grade->finalgrade;
 
+                if ($this->showfeedback) {
+                    // Copy $class before appending itemcenter as feedback should not be centered
+                    $classfeedback = $class;
+                }
                 $class .= " itemcenter ";
                 if ($this->showweight) {
                     $data['weight']['class'] = $class;
@@ -474,13 +493,13 @@ class grade_report_user extends grade_report {
                 // Feedback
                 if ($this->showfeedback) {
                     if ($grade_grade->overridden > 0 AND ($type == 'categoryitem' OR $type == 'courseitem')) {
-                    $data['feedback']['class'] = $class.' feedbacktext';
+                    $data['feedback']['class'] = $classfeedback.' feedbacktext';
                         $data['feedback']['content'] = get_string('overridden', 'grades').': ' . format_text($grade_grade->feedback, $grade_grade->feedbackformat);
                     } else if (empty($grade_grade->feedback) or (!$this->canviewhidden and $grade_grade->is_hidden())) {
-                        $data['feedback']['class'] = $class.' feedbacktext';
+                        $data['feedback']['class'] = $classfeedback.' feedbacktext';
                         $data['feedback']['content'] = '&nbsp;';
                     } else {
-                        $data['feedback']['class'] = $class.' feedbacktext';
+                        $data['feedback']['class'] = $classfeedback.' feedbacktext';
                         $data['feedback']['content'] = format_text($grade_grade->feedback, $grade_grade->feedbackformat);
                     }
                 }
@@ -650,7 +669,7 @@ class grade_report_user extends grade_report {
             // Then left join with grade_grades and look for rows with null final grade (which includes grade items with no grade_grade)
             $sql = "SELECT gi.id, COUNT(u.id) AS count
                       FROM {grade_items} gi
-                      JOIN {user} u
+                      JOIN {user} u ON u.deleted = 0
                       JOIN ($enrolledsql) je ON je.id = u.id
                       JOIN (
                                SELECT DISTINCT ra.userid
@@ -659,10 +678,9 @@ class grade_report_user extends grade_report {
                                   AND ra.contextid " . get_related_contexts_string($this->context) . "
                            ) rainner ON rainner.userid = u.id
                       LEFT JOIN {grade_grades} gg
-                           ON (gg.itemid = gi.id AND gg.userid = u.id AND gg.finalgrade IS NOT NULL AND gg.hidden = 0)
+                             ON (gg.itemid = gi.id AND gg.userid = u.id AND gg.finalgrade IS NOT NULL AND gg.hidden = 0)
                       $groupsql
                      WHERE gi.courseid = :courseid
-                           AND u.deleted = 0
                            AND gg.finalgrade IS NULL
                            $groupwheresql
                   GROUP BY gi.id";

@@ -45,7 +45,7 @@
 global $CFG; // this should be done much earlier in config.php before creating new $CFG instance
 
 if (!isset($CFG)) {
-    if (defined('PHPUNIT_SCRIPT') and PHPUNIT_SCRIPT) {
+    if (defined('PHPUNIT_TEST') and PHPUNIT_TEST) {
         echo('There is a missing "global $CFG;" at the beginning of the config.php file.'."\n");
         exit(1);
     } else {
@@ -112,7 +112,10 @@ if (!isset($CFG->cachedir)) {
 // directory of the script when run from the command line. The require_once()
 // would fail, so we'll have to chdir()
 if (!isset($_SERVER['REMOTE_ADDR']) && isset($_SERVER['argv'][0])) {
-    chdir(dirname($_SERVER['argv'][0]));
+    // do it only once - skip the second time when continuing after prevous abort
+    if (!defined('ABORT_AFTER_CONFIG') and !defined('ABORT_AFTER_CONFIG_CANCEL')) {
+        chdir(dirname($_SERVER['argv'][0]));
+    }
 }
 
 // sometimes default PHP settings are borked on shared hosting servers, I wonder why they have to do that??
@@ -130,6 +133,11 @@ if (!defined('NO_OUTPUT_BUFFERING')) {
     define('NO_OUTPUT_BUFFERING', false);
 }
 
+// PHPUnit tests need custom init
+if (!defined('PHPUNIT_TEST')) {
+    define('PHPUNIT_TEST', false);
+}
+
 // Servers should define a default timezone in php.ini, but if they don't then make sure something is defined.
 // This is a quick hack.  Ideally we should ask the admin for a value.  See MDL-22625 for more on this.
 if (function_exists('date_default_timezone_set') and function_exists('date_default_timezone_get')) {
@@ -137,15 +145,6 @@ if (function_exists('date_default_timezone_set') and function_exists('date_defau
     date_default_timezone_set(date_default_timezone_get());
     error_reporting($olddebug);
     unset($olddebug);
-}
-
-// PHPUnit scripts are a special case, for now we treat them as normal CLI scripts,
-// please note you must install PHPUnit library separately via PEAR
-if (!defined('PHPUNIT_SCRIPT')) {
-    define('PHPUNIT_SCRIPT', false);
-}
-if (PHPUNIT_SCRIPT) {
-    define('CLI_SCRIPT', true);
 }
 
 // Detect CLI scripts - CLI scripts are executed from command line, do not have session and we do not want HTML in output
@@ -223,7 +222,7 @@ umask(0000);
 
 // exact version of currently used yui2 and 3 library
 $CFG->yui2version = '2.9.0';
-$CFG->yui3version = '3.4.1';
+$CFG->yui3version = '3.5.0';
 
 
 // special support for highly optimised scripts that do not need libraries and DB connection
@@ -235,7 +234,11 @@ if (defined('ABORT_AFTER_CONFIG')) {
         } else {
             error_reporting(0);
         }
-        if (empty($CFG->debugdisplay)) {
+        if (NO_DEBUG_DISPLAY) {
+            // Some parts of Moodle cannot display errors and debug at all.
+            ini_set('display_errors', '0');
+            ini_set('log_errors', '1');
+        } else if (empty($CFG->debugdisplay)) {
             ini_set('display_errors', '0');
             ini_set('log_errors', '1');
         } else {
@@ -296,6 +299,11 @@ global $SESSION;
 global $USER;
 
 /**
+ * Frontpage course record
+ */
+global $SITE;
+
+/**
  * A central store of information about the current page we are
  * generating in response to the user's request.
  *
@@ -336,6 +344,10 @@ global $MCACHE;
 
 /**
  * Full script path including all params, slash arguments, scheme and host.
+ *
+ * Note: Do NOT use for getting of current page URL or detection of https,
+ * instead use $PAGE->url or strpos($CFG->httpswwwroot, 'https:') === 0
+ *
  * @global string $FULLME
  * @name $FULLME
  */
@@ -390,11 +402,13 @@ init_performance_info();
 $OUTPUT = new bootstrap_renderer();
 
 // set handler for uncaught exceptions - equivalent to print_error() call
-set_exception_handler('default_exception_handler');
-set_error_handler('default_error_handler', E_ALL | E_STRICT);
+if (!PHPUNIT_TEST or PHPUNIT_UTIL) {
+    set_exception_handler('default_exception_handler');
+    set_error_handler('default_error_handler', E_ALL | E_STRICT);
+}
 
 // If there are any errors in the standard libraries we want to know!
-error_reporting(E_ALL);
+error_reporting(E_ALL | E_STRICT);
 
 // Just say no to link prefetching (Moz prefetching, Google Web Accelerator, others)
 // http://www.google.com/webmasters/faq.html#prefetchblock
@@ -453,16 +467,28 @@ setup_validate_php_configuration();
 // Connect to the database
 setup_DB();
 
+if (PHPUNIT_TEST and !PHPUNIT_UTIL) {
+    // make sure tests do not run in parallel
+    phpunit_util::acquire_test_lock();
+    // reset DB tables
+    phpunit_util::reset_database();
+}
+
 // Disable errors for now - needed for installation when debug enabled in config.php
 if (isset($CFG->debug)) {
     $originalconfigdebug = $CFG->debug;
     unset($CFG->debug);
 } else {
-    $originalconfigdebug = -1;
+    $originalconfigdebug = null;
 }
 
 // Load up any configuration from the config table
-initialise_cfg();
+
+if (PHPUNIT_TEST) {
+    phpunit_util::initialise_cfg();
+} else {
+    initialise_cfg();
+}
 
 // Verify upgrade is not running unless we are in a script that needs to execute in any case
 if (!defined('NO_UPGRADE_CHECK') and isset($CFG->upgraderunning)) {
@@ -483,7 +509,7 @@ if (isset($CFG->debug)) {
     $originaldatabasedebug = $CFG->debug;
     unset($CFG->debug);
 } else {
-    $originaldatabasedebug = -1;
+    $originaldatabasedebug = null;
 }
 
 // enable circular reference collector in PHP 5.3,
@@ -497,43 +523,13 @@ if (function_exists('register_shutdown_function')) {
     register_shutdown_function('moodle_request_shutdown');
 }
 
-// Defining the site
-try {
-    $SITE = get_site();
-    /**
-     * If $SITE global from {@link get_site()} is set then SITEID to $SITE->id, otherwise set to 1.
-     */
-    define('SITEID', $SITE->id);
-    // And the 'default' course - this will usually get reset later in require_login() etc.
-    $COURSE = clone($SITE);
-} catch (dml_exception $e) {
-    $SITE = null;
-    if (empty($CFG->version)) {
-        // we are just installing
-        /**
-         * @ignore
-         */
-        define('SITEID', 1);
-        // And the 'default' course
-        $COURSE = new stdClass();  // no site created yet
-        $COURSE->id = 1;
-    } else {
-        throw $e;
-    }
-}
-
-// define SYSCONTEXTID in config.php if you want to save some queries (after install or upgrade!)
-if (!defined('SYSCONTEXTID')) {
-    get_system_context();
-}
-
 // Set error reporting back to normal
-if ($originaldatabasedebug == -1) {
+if ($originaldatabasedebug === null) {
     $CFG->debug = DEBUG_MINIMAL;
 } else {
     $CFG->debug = $originaldatabasedebug;
 }
-if ($originalconfigdebug !== -1) {
+if ($originalconfigdebug !== null) {
     $CFG->debug = $originalconfigdebug;
 }
 unset($originalconfigdebug);
@@ -624,15 +620,6 @@ ini_set('pcre.backtrack_limit', 20971520);  // 20 MB
 $CFG->wordlist = $CFG->libdir .'/wordlist.txt';
 $CFG->moddata  = 'moddata';
 
-// Create the $PAGE global.
-if (!empty($CFG->moodlepageclass)) {
-    $classname = $CFG->moodlepageclass;
-} else {
-    $classname = 'moodle_page';
-}
-$PAGE = new $classname();
-unset($classname);
-
 // A hack to get around magic_quotes_gpc being turned on
 // It is strongly recommended to disable "magic_quotes_gpc"!
 if (ini_get_bool('magic_quotes_gpc')) {
@@ -675,6 +662,32 @@ if (isset($_SERVER['PHP_SELF'])) {
     unset($phppos);
 }
 
+// initialise ME's - this must be done BEFORE starting of session!
+initialise_fullme();
+
+// define SYSCONTEXTID in config.php if you want to save some queries,
+// after install it must match the system context record id.
+if (!defined('SYSCONTEXTID')) {
+    get_system_context();
+}
+
+// Defining the site - aka frontpage course
+try {
+    $SITE = get_site();
+} catch (dml_exception $e) {
+    $SITE = null;
+    if (empty($CFG->version)) {
+        $SITE = new stdClass();
+        $SITE->id = 1;
+    } else {
+        throw $e;
+    }
+}
+// And the 'default' course - this will usually get reset later in require_login() etc.
+$COURSE = clone($SITE);
+/** @deprecated Id of the frontpage course, use $SITE->id instead */
+define('SITEID', $SITE->id);
+
 // init session prevention flag - this is defined on pages that do not want session
 if (CLI_SCRIPT) {
     // no sessions in CLI scripts possible
@@ -696,10 +709,6 @@ if (CLI_SCRIPT) {
 session_get_instance();
 $SESSION = &$_SESSION['SESSION'];
 $USER    = &$_SESSION['USER'];
-
-// initialise ME's
-// This must presently come AFTER $USER has been set up.
-initialise_fullme();
 
 // Late profiling, only happening if early one wasn't started
 if (!empty($CFG->profilingenabled)) {
@@ -761,6 +770,16 @@ if (empty($CFG->lang)) {
 // it is definitely too late to call this first in require_login()!
 moodle_setlocale();
 
+// Create the $PAGE global - this marks the PAGE and OUTPUT fully initialised, this MUST be done at the end of setup!
+if (!empty($CFG->moodlepageclass)) {
+    $classname = $CFG->moodlepageclass;
+} else {
+    $classname = 'moodle_page';
+}
+$PAGE = new $classname();
+unset($classname);
+
+
 if (!empty($CFG->debugvalidators) and !empty($CFG->guestloginbutton)) {
     if ($CFG->theme == 'standard' or $CFG->theme == 'standardwhite') {    // Temporary measure to help with XHTML validation
         if (isset($_SERVER['HTTP_USER_AGENT']) and empty($USER->id)) {      // Allow W3CValidator in as user called w3cvalidator (or guest)
@@ -811,9 +830,6 @@ if ($USER && function_exists('apache_note')
     apache_note('MOODLEUSER', $logname);
 }
 
-// Adjust ALLOWED_TAGS
-adjust_allowed_tags();
-
 // Use a custom script replacement if one exists
 if (!empty($CFG->customscripts)) {
     if (($customscript = custom_script_path()) !== false) {
@@ -821,12 +837,16 @@ if (!empty($CFG->customscripts)) {
     }
 }
 
-// in the first case, ip in allowed list will be performed first
-// for example, client IP is 192.168.1.1
-// 192.168 subnet is an entry in allowed list
-// 192.168.1.1 is banned in blocked list
-// This ip will be banned finally
-if (!empty($CFG->allowbeforeblock)) { // allowed list processed before blocked list?
+if (PHPUNIT_TEST) {
+    // no ip blocking, these are CLI only
+} else if (CLI_SCRIPT and !defined('WEB_CRON_EMULATED_CLI')) {
+    // no ip blocking
+} else if (!empty($CFG->allowbeforeblock)) { // allowed list processed before blocked list?
+    // in this case, ip in allowed list will be performed first
+    // for example, client IP is 192.168.1.1
+    // 192.168 subnet is an entry in allowed list
+    // 192.168.1.1 is banned in blocked list
+    // This ip will be banned finally
     if (!empty($CFG->allowedip)) {
         if (!remoteip_in_list($CFG->allowedip)) {
             die(get_string('ipblocked', 'admin'));
@@ -870,6 +890,15 @@ if (!empty($CFG->allowbeforeblock)) { // allowed list processed before blocked l
     }
 
 }
+
+// // try to detect IE6 and prevent gzip because it is extremely buggy browser
+if (!empty($_SERVER['HTTP_USER_AGENT']) and strpos($_SERVER['HTTP_USER_AGENT'], 'MSIE 6') !== false) {
+    @ini_set('zlib.output_compression', 'Off');
+    if (function_exists('apache_setenv')) {
+        @apache_setenv('no-gzip', 1);
+    }
+}
+
 
 // note: we can not block non utf-8 installations here, because empty mysql database
 // might be converted to utf-8 in admin/index.php during installation

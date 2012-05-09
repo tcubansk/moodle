@@ -20,7 +20,7 @@
  * MSSQL specific SQL code generator.
  *
  * @package    core
- * @subpackage ddl
+ * @subpackage ddl_generator
  * @copyright  1999 onwards Martin Dougiamas     http://dougiamas.com
  *             2001-3001 Eloy Lafuente (stronk7) http://contiento.com
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
@@ -42,7 +42,6 @@ class mssql_sql_generator extends sql_generator {
 
     public $number_type = 'DECIMAL';    // Proper type for NUMBER(x) in this DB
 
-    public $unsigned_allowed = false;    // To define in the generator must handle unsigned information
     public $default_for_char = '';      // To define the default to set for NOT NULLs CHARs without default (null=do nothing)
 
     public $specify_nulls = true;  //To force the generator if NULL clauses must be specified. It shouldn't be necessary
@@ -51,8 +50,6 @@ class mssql_sql_generator extends sql_generator {
     public $sequence_extra_code = false; //Does the generator need to add extra code to generate the sequence fields
     public $sequence_name = 'IDENTITY(1,1)'; //Particular name for inline sequences in this generator
     public $sequence_only = false; //To avoid to output the rest of the field specs, leaving only the name and the sequence_name variable
-
-    public $enum_inline_code = false; //Does the generator need to add inline code in the column definition
 
     public $add_table_comments  = false;  // Does the generator need to add code for table comments
 
@@ -85,12 +82,22 @@ class mssql_sql_generator extends sql_generator {
             $table = new xmldb_table($table);
         }
 
-        // From http://msdn.microsoft.com/en-us/library/ms176057.aspx
         $value = (int)$this->mdb->get_field_sql('SELECT MAX(id) FROM {'. $table->getName() . '}');
+        $sqls = array();
+
+        // MSSQL has one non-consistent behavior to create the first identity value, depending
+        // if the table has been truncated or no. If you are really interested, you can find the
+        // whole description of the problem at:
+        //     http://www.justinneff.com/archive/tag/dbcc-checkident
         if ($value == 0) {
+            // truncate to get consistent result from reseed
+            $sqls[] = "TRUNCATE TABLE " . $this->getTableName($table);
             $value = 1;
         }
-        return array("DBCC CHECKIDENT ('" . $this->getTableName($table) . "', RESEED, $value)");
+
+        // From http://msdn.microsoft.com/en-us/library/ms176057.aspx
+        $sqls[] = "DBCC CHECKIDENT ('" . $this->getTableName($table) . "', RESEED, $value)";
+        return $sqls;
     }
 
     /**
@@ -129,12 +136,17 @@ class mssql_sql_generator extends sql_generator {
     }
 
     /**
-     * Given one correct xmldb_table and the new name, returns the SQL statements
-     * to drop it (inside one array)
+     * Given one correct xmldb_table, returns the SQL statements
+     * to drop it (inside one array).
+     *
+     * @param xmldb_table $xmldb_table The table to drop.
+     * @return array SQL statement(s) for dropping the specified table.
      */
-    public function getDropTempTableSQL($xmldb_table) {
-        $sqlarr = $this->getDropTableSQL($xmldb_table);
-        $this->temptables->delete_temptable($xmldb_table->getName());
+    public function getDropTableSQL($xmldb_table) {
+        $sqlarr = parent::getDropTableSQL($xmldb_table);
+        if ($this->temptables->is_temptable($xmldb_table->getName())) {
+            $this->temptables->delete_temptable($xmldb_table->getName());
+        }
         return $sqlarr;
     }
 
@@ -215,11 +227,6 @@ class mssql_sql_generator extends sql_generator {
             $results[] = 'ALTER TABLE ' . $tablename . ' DROP CONSTRAINT ' . $defaultname;
         }
 
-    /// Look for any check constraint in this field and drop it
-        if ($drop_check = $this->getDropEnumSQL($xmldb_table, $xmldb_field)) {
-            $results = array_merge($results, $drop_check);
-        }
-
     /// Build the standard alter table drop column
         $results[] = 'ALTER TABLE ' . $tablename . ' DROP COLUMN ' . $fieldname;
 
@@ -259,22 +266,6 @@ class mssql_sql_generator extends sql_generator {
     public function getRenameTableExtraSQL($xmldb_table, $newname) {
 
         $results = array();
-
-        $newt = new xmldb_table($newname); //Temporal table for name calculations
-
-        $oldtablename = $this->getTableName($xmldb_table);
-        $newtablename = $this->getTableName($newt);
-
-    /// Rename all the check constraints in the table
-        $oldconstraintprefix = $this->getNameForObject($xmldb_table->getName(), '');
-        $newconstraintprefix = $this->getNameForObject($newt->getName(), '', '');
-
-        if ($constraints = $this->getCheckConstraintsFromDB($xmldb_table)) {
-            foreach ($constraints as $constraint) {
-            /// Drop the old constraint
-                $results[] = 'ALTER TABLE ' . $newtablename . ' DROP CONSTRAINT ' . $constraint->name;
-            }
-        }
 
         return $results;
     }
@@ -437,25 +428,6 @@ class mssql_sql_generator extends sql_generator {
     }
 
     /**
-     * Given one xmldb_table and one xmldb_field, return the SQL statements needed to drop its enum
-     * (usually invoked from getModifyEnumSQL()
-     *
-     * TODO: Moodle 2.1 - drop in Moodle 2.1
-     */
-    public function getDropEnumSQL($xmldb_table, $xmldb_field) {
-    /// Let's introspect to know the real name of the check constraint
-        if ($check_constraints = $this->getCheckConstraintsFromDB($xmldb_table, $xmldb_field)) {
-            $check_constraint = array_shift($check_constraints); /// Get the 1st (should be only one)
-            $constraint_name = strtolower($check_constraint->name); /// Extract the REAL name
-        /// All we have to do is to drop the check constraint
-            return array('ALTER TABLE ' . $this->getTableName($xmldb_table) .
-                     ' DROP CONSTRAINT ' . $constraint_name);
-        } else { /// Constraint not found. Nothing to do
-            return array();
-        }
-    }
-
-    /**
      * Given one xmldb_table and one xmldb_field, return the SQL statements needed to create its default
      * (usually invoked from getModifyDefaultSQL()
      */
@@ -520,55 +492,6 @@ class mssql_sql_generator extends sql_generator {
         } else {
             return false;
         }
-    }
-
-    /**
-     * Given one xmldb_table returns one array with all the check constraints
-     * in the table (fetched from DB)
-     * Optionally the function allows one xmldb_field to be specified in
-     * order to return only the check constraints belonging to one field.
-     * Each element contains the name of the constraint and its description
-     * If no check constraints are found, returns an empty array
-     *
-     * TODO: Moodle 2.1 - drop in Moodle 2.1
-     */
-    public function getCheckConstraintsFromDB($xmldb_table, $xmldb_field = null) {
-
-
-        $results = array();
-
-        $tablename = $this->getTableName($xmldb_table);
-
-        if ($constraints = $this->mdb->get_records_sql("SELECT o.name, c.text AS description
-                                                          FROM sysobjects o,
-                                                               sysobjects p,
-                                                               syscomments c
-                                                         WHERE p.id = o.parent_obj
-                                                               AND o.id = c.id
-                                                               AND o.xtype = 'C'
-                                                               AND p.name = ?", array($tablename))) {
-            foreach ($constraints as $constraint) {
-                $results[$constraint->name] = $constraint;
-            }
-        }
-
-    /// Filter by the required field if specified
-        if ($xmldb_field) {
-            $filtered_results = array();
-            $filter = $xmldb_field->getName();
-        /// Lets clean a bit each constraint description, looking for the filtered field
-            foreach ($results as $key => $result) {
-                $description = trim(preg_replace('/[\(\)]/', '',  $result->description));   // Parenthesis out & trim
-                /// description starts by [$filter] assume it's a constraint belonging to the field
-                if (preg_match("/^\[{$filter}\]/i", $description)) {
-                    $filtered_results[$key] = $result;
-                }
-            }
-        /// Assign filtered results to the final results array
-            $results =  $filtered_results;
-        }
-
-        return $results;
     }
 
     /**

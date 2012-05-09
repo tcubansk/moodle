@@ -174,8 +174,8 @@ class qtype_numerical_edit_form extends question_edit_form {
         return $question;
     }
 
-    protected function data_preprocessing_answers($question) {
-        $question = parent::data_preprocessing_answers($question);
+    protected function data_preprocessing_answers($question, $withanswerfiles = false) {
+        $question = parent::data_preprocessing_answers($question, $withanswerfiles);
         if (empty($question->options->answers)) {
             return $question;
         }
@@ -264,7 +264,7 @@ class qtype_numerical_edit_form extends question_edit_form {
                 if ($data['fraction'][$key] == 1) {
                     $maxgrade = true;
                 }
-                if (!is_numeric($data['tolerance'][$key])) {
+                if ($answer !== '*' && !is_numeric($data['tolerance'][$key])) {
                     $errors['tolerance['.$key.']'] =
                             get_string('mustbenumeric', 'qtype_calculated');
                 }

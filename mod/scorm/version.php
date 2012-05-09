@@ -23,6 +23,9 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-$module->version  = 2011080100;   // The (date) version of this module
-$module->requires = 2010080300;   // The version of Moodle that is required
-$module->cron     = 300;            // How often should cron check this module (seconds)?
+defined('MOODLE_INTERNAL') || die();
+
+$module->version   = 2012032101;       // The current module version (Date: YYYYMMDDXX)
+$module->requires  = 2012030100.04;    // Requires this Moodle version
+$module->component = 'mod_scorm'; // Full name of the plugin (used for diagnostics)
+$module->cron      = 300;

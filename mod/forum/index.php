@@ -68,7 +68,6 @@ $strunsubscribe  = get_string('unsubscribe', 'forum');
 $stryes          = get_string('yes');
 $strno           = get_string('no');
 $strrss          = get_string('rss');
-$strsectionname  = get_string('sectionname', 'format_'.$course->format);
 
 $searchform = forum_search_form($course);
 
@@ -117,7 +116,7 @@ $forums = $DB->get_records('forum', array('course' => $course->id));
 
 $generalforums  = array();
 $learningforums = array();
-$modinfo =& get_fast_modinfo($course);
+$modinfo = get_fast_modinfo($course);
 
 if (!isset($modinfo->instances['forum'])) {
     $modinfo->instances['forum'] = array();
@@ -150,8 +149,13 @@ foreach ($modinfo->instances['forum'] as $forumid=>$cm) {
     }
 }
 
-/// Do course wide subscribe/unsubscribe
-if (!is_null($subscribe) and !isguestuser()) {
+// Do course wide subscribe/unsubscribe if requested
+if (!is_null($subscribe)) {
+    if (isguestuser() or !$can_subscribe) {
+        // there should not be any links leading to this place, just redirect
+        redirect(new moodle_url('/mod/forum/index.php', array('id' => $id)), get_string('subscribeenrolledonly', 'forum'));
+    }
+    // Can proceed now, the user is not guest and is enrolled
     foreach ($modinfo->instances['forum'] as $forumid=>$cm) {
         $forum = $forums[$forumid];
         $modcontext = get_context_instance(CONTEXT_MODULE, $cm->id);
@@ -260,8 +264,14 @@ if ($generalforums) {
                 } else {
                     $tooltiptext = get_string('rsssubscriberssposts', 'forum');
                 }
+
+                if (!isloggedin() && $course->id == SITEID) {
+                    $userid = guest_user()->id;
+                } else {
+                    $userid = $USER->id;
+                }
                 //Get html code for RSS link
-                $row[] = rss_get_link($context->id, $USER->id, 'mod_forum', $forum->id, $tooltiptext);
+                $row[] = rss_get_link($context->id, $userid, 'mod_forum', $forum->id, $tooltiptext);
             } else {
                 $row[] = '&nbsp;';
             }
@@ -300,6 +310,8 @@ if ($show_rss = (($can_subscribe || $course->id == SITEID) &&
 /// Now let's process the learning forums
 
 if ($course->id != SITEID) {    // Only real courses have learning forums
+    // 'format_.'$course->format only applicable when not SITEID (format_site is not a format)
+    $strsectionname  = get_string('sectionname', 'format_'.$course->format);
     // Add extra field for section number, at the front
     array_unshift($learningtable->head, $strsectionname);
     array_unshift($learningtable->align, 'center');
@@ -410,7 +422,8 @@ $PAGE->set_heading($course->fullname);
 $PAGE->set_button($searchform);
 echo $OUTPUT->header();
 
-if (!isguestuser()) {
+// Show the subscribe all options only to non-guest, enrolled users
+if (!isguestuser() && isloggedin() && $can_subscribe) {
     echo $OUTPUT->box_start('subscription');
     echo html_writer::tag('div',
         html_writer::link(new moodle_url('/mod/forum/index.php', array('id'=>$course->id, 'subscribe'=>1, 'sesskey'=>sesskey())),

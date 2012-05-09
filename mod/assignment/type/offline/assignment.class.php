@@ -11,6 +11,10 @@ class assignment_offline extends assignment_base {
         $this->type = 'offline';
     }
 
+    function supports_lateness() {
+        return false;
+    }
+
     function display_lateness($timesubmitted) {
         return '';
     }
@@ -18,7 +22,7 @@ class assignment_offline extends assignment_base {
         return '';//does nothing!
     }
 
-    function prepare_new_submission($userid) {
+    function prepare_new_submission($userid, $teachermodified=false) {
         $submission = new stdClass();
         $submission->assignment   = $this->assignment->id;
         $submission->userid       = $userid;
@@ -37,7 +41,7 @@ class assignment_offline extends assignment_base {
     }
 
     // needed for the timemodified override
-    function process_feedback() {
+    function process_feedback($formdata=null) {
         global $CFG, $USER, $DB;
         require_once($CFG->libdir.'/gradelib.php');
 

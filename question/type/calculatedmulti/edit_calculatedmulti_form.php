@@ -48,11 +48,7 @@ class qtype_calculatedmulti_edit_form extends question_edit_form {
             $contexts, $formeditable = true) {
         $this->question = $question;
         $this->qtypeobj = question_bank::get_qtype('calculatedmulti');
-        if (1 == optional_param('reload', '', PARAM_INT)) {
-            $this->reload = true;
-        } else {
-            $this->reload = false;
-        }
+        $this->reload = optional_param('reload', false, PARAM_BOOL);
         if (!$this->reload) {
             // use database data as this is first pass
             if (isset($this->question->id)) {
@@ -158,11 +154,11 @@ class qtype_calculatedmulti_edit_form extends question_edit_form {
         $mform->setConstants(array('nounits'=>$nounits));
         for ($i = 0; $i < $nounits; $i++) {
             $mform->addElement('hidden', 'unit'."[$i]",
-                    optional_param('unit'."[$i]", '', PARAM_NOTAGS));
+                    optional_param("unit[$i]", '', PARAM_NOTAGS));
             $mform->setType('unit'."[$i]", PARAM_NOTAGS);
             $mform->addElement('hidden', 'multiplier'."[$i]",
-                    optional_param('multiplier'."[$i]", '', PARAM_NUMBER));
-            $mform->setType('multiplier'."[$i]", PARAM_NUMBER);
+                    optional_param("multiplier[$i]", '', PARAM_NUMBER));
+            $mform->setType("multiplier[$i]", PARAM_NUMBER);
         }
 
         $this->add_combined_feedback_fields(true);
@@ -184,7 +180,7 @@ class qtype_calculatedmulti_edit_form extends question_edit_form {
 
     public function data_preprocessing($question) {
         $question = parent::data_preprocessing($question);
-        $question = $this->data_preprocessing_answers($question, true);
+        $question = $this->data_preprocessing_answers($question, false);
         $question = $this->data_preprocessing_combined_feedback($question, true);
         $question = $this->data_preprocessing_hints($question, true, true);
 
@@ -198,8 +194,8 @@ class qtype_calculatedmulti_edit_form extends question_edit_form {
         return $question;
     }
 
-    protected function data_preprocessing_answers($question) {
-        $question = parent::data_preprocessing_answers($question);
+    protected function data_preprocessing_answers($question, $withanswerfiles = false) {
+        $question = parent::data_preprocessing_answers($question, $withanswerfiles);
         if (empty($question->options->answers)) {
             return $question;
         }
@@ -260,91 +256,80 @@ class qtype_calculatedmulti_edit_form extends question_edit_form {
                         get_string('atleastonewildcard', 'qtype_calculated');
             }
         }
-        if ($data['multichoice'] == 1) {
-            foreach ($answers as $key => $answer) {
-                $trimmedanswer = trim($answer);
-                if ($trimmedanswer != '' || $answercount == 0) {
-                    //verifying for errors in {=...} in answer text;
-                    $qanswer = '';
-                    $qanswerremaining =  $trimmedanswer;
-                    $possibledatasets = $this->qtypeobj->find_dataset_names($trimmedanswer);
-                    foreach ($possibledatasets as $name => $value) {
-                        $qanswerremaining = str_replace('{'.$name.'}', '1', $qanswerremaining);
-                    }
+        $totalfraction = 0;
+        $maxfraction = -1;
+        foreach ($answers as $key => $answer) {
+            $trimmedanswer = trim($answer);
+            $fraction = (float) $data['fraction'][$key];
+            if (empty($trimmedanswer) && $trimmedanswer != '0' && empty($fraction)) {
+                continue;
+            }
+            if (empty($trimmedanswer)) {
+                $errors['fraction['.$key.']'] = get_string('errgradesetanswerblank', 'qtype_multichoice');
+            }
+            if ($trimmedanswer != '' || $answercount == 0) {
+                //verifying for errors in {=...} in answer text;
+                $qanswer = '';
+                $qanswerremaining =  $trimmedanswer;
+                $possibledatasets = $this->qtypeobj->find_dataset_names($trimmedanswer);
+                foreach ($possibledatasets as $name => $value) {
+                    $qanswerremaining = str_replace('{'.$name.'}', '1', $qanswerremaining);
+                }
 
-                    while (preg_match('~\{=([^[:space:]}]*)}~', $qanswerremaining, $regs1)) {
-                        $qanswersplits = explode($regs1[0], $qanswerremaining, 2);
-                        $qanswer = $qanswer . $qanswersplits[0];
-                        $qanswerremaining = $qanswersplits[1];
-                        if (!empty($regs1[1]) && $formulaerrors =
-                                qtype_calculated_find_formula_errors($regs1[1])) {
-                            if (!isset($errors['answer['.$key.']'])) {
-                                $errors['answer['.$key.']'] = $formulaerrors.':'.$regs1[1];
-                            } else {
-                                $errors['answer['.$key.']'] .= '<br/>'.$formulaerrors.':'.$regs1[1];
-                            }
+                while (preg_match('~\{=([^[:space:]}]*)}~', $qanswerremaining, $regs1)) {
+                    $qanswersplits = explode($regs1[0], $qanswerremaining, 2);
+                    $qanswer = $qanswer . $qanswersplits[0];
+                    $qanswerremaining = $qanswersplits[1];
+                    if (!empty($regs1[1]) && $formulaerrors =
+                            qtype_calculated_find_formula_errors($regs1[1])) {
+                        if (!isset($errors['answer['.$key.']'])) {
+                            $errors['answer['.$key.']'] = $formulaerrors.':'.$regs1[1];
+                        } else {
+                            $errors['answer['.$key.']'] .= '<br/>'.$formulaerrors.':'.$regs1[1];
                         }
                     }
                 }
-                if ($trimmedanswer != '') {
-                    if ('2' == $data['correctanswerformat'][$key] &&
-                            '0' == $data['correctanswerlength'][$key]) {
-                        $errors['correctanswerlength['.$key.']'] =
-                                get_string('zerosignificantfiguresnotallowed', 'qtype_calculated');
-                    }
-                    if (!is_numeric($data['tolerance'][$key])) {
-                        $errors['tolerance['.$key.']'] =
-                                get_string('mustbenumeric', 'qtype_calculated');
-                    }
-                    if ($data['fraction'][$key] == 1) {
-                        $maxgrade = true;
-                    }
-
-                    $answercount++;
+            }
+            if ($trimmedanswer != '') {
+                if ('2' == $data['correctanswerformat'][$key] &&
+                        '0' == $data['correctanswerlength'][$key]) {
+                    $errors['correctanswerlength['.$key.']'] =
+                            get_string('zerosignificantfiguresnotallowed', 'qtype_calculated');
                 }
-                //check grades
-                $totalfraction = 0;
-                $maxfraction = 0;
-                if ($answer != '') {
-                    if ($data['fraction'][$key] > 0) {
-                        $totalfraction += $data['fraction'][$key];
-                    }
-                    if ($data['fraction'][$key] > $maxfraction) {
-                        $maxfraction = $data['fraction'][$key];
-                    }
+                if (!is_numeric($data['tolerance'][$key])) {
+                    $errors['tolerance['.$key.']'] =
+                            get_string('mustbenumeric', 'qtype_calculated');
                 }
-            }
-            if ($answercount == 0) {
-                $errors['answer[0]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
-                $errors['answer[1]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
-            } else if ($answercount == 1) {
-                $errors['answer[1]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
-
-            }
-
-            /// Perform sanity checks on fractional grades
-            if ($data['single']) {
-                if ($maxfraction > 0.999) {
-                    $maxfraction = $maxfraction * 100;
-                    $errors['fraction[0]'] =
-                            get_string('errfractionsnomax', 'qtype_multichoice', $maxfraction);
+                if ($data['fraction'][$key] > 0) {
+                    $totalfraction += $data['fraction'][$key];
                 }
-            } else {
-                $totalfraction = round($totalfraction, 2);
-                if ($totalfraction != 1) {
-                    $totalfraction = $totalfraction * 100;
-                    $errors['fraction[0]'] =
-                            get_string('errfractionsaddwrong', 'qtype_multichoice', $totalfraction);
+                if ($data['fraction'][$key] > $maxfraction) {
+                    $maxfraction = $data['fraction'][$key];
                 }
-            }
 
-            if ($answercount == 0) {
-                $errors['answer[0]'] = get_string('atleastoneanswer', 'qtype_calculated');
+                $answercount++;
             }
-            if ($maxgrade == false) {
-                $errors['fraction[0]'] = get_string('fractionsnomax', 'question');
-            }
+        }
+        if ($answercount == 0) {
+            $errors['answer[0]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
+            $errors['answer[1]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
+        } else if ($answercount == 1) {
+            $errors['answer[1]'] = get_string('notenoughanswers', 'qtype_multichoice', 2);
 
+        }
+        /// Perform sanity checks on fractional grades
+        if ($data['single']== 1 ) {
+            if ($maxfraction != 1) {
+                $errors['fraction[0]'] = get_string('errfractionsnomax', 'qtype_multichoice',
+                        $maxfraction * 100);
+            }
+        } else {
+            $totalfraction = round($totalfraction, 2);
+            if ($totalfraction != 1) {
+                $totalfraction = $totalfraction * 100;
+                $errors['fraction[0]'] =
+                        get_string('errfractionsaddwrong', 'qtype_multichoice', $totalfraction);
+            }
         }
         return $errors;
     }

@@ -45,7 +45,7 @@ if ($id) {
     $cm = get_coursemodule_from_instance('data', $data->id, $course->id, null, MUST_EXIST);
 }
 $context = get_context_instance(CONTEXT_MODULE, $cm->id, MUST_EXIST);
-require_login($course->id, false, $cm);
+require_login($course, false, $cm);
 require_capability('mod/data:managetemplates', $context);
 $PAGE->set_url(new moodle_url('/mod/data/preset.php', array('d'=>$data->id)));
 $PAGE->set_title(get_string('course') . ': ' . $course->fullname);
@@ -106,6 +106,7 @@ if (optional_param('sesskey', false, PARAM_BOOL) && confirm_sesskey()) {
         $importer = new data_preset_existing_importer($course, $cm, $data, $formdata->fullname);
         echo $renderer->import_setting_mappings($data, $importer);
         echo $OUTPUT->footer();
+        exit(0);
     } else if ($formdata = $form_importzip->get_data()) {
         $file = new stdClass;
         $file->name = $form_importzip->get_new_filename('importfile');
@@ -182,8 +183,7 @@ if (optional_param('sesskey', false, PARAM_BOOL) && confirm_sesskey()) {
                print_error('invalidrequest');
             }
 
-            $presetpath = data_preset_path($course, $userid, $shortname);
-            fulldelete($presetpath);
+            data_delete_site_preset($shortname);
 
             $strdeleted = get_string('deleted', 'data');
             echo $OUTPUT->notification("$shortname $strdeleted", 'notifysuccess');

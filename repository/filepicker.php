@@ -139,7 +139,15 @@ case 'search':
         echo '<table>';
         foreach ($search_result['list'] as $item) {
             echo '<tr>';
-            echo '<td><img src="'.$item['thumbnail'].'" />';
+            echo '<td>';
+            $style = '';
+            if (isset($item['thumbnail_height'])) {
+                $style .= 'max-height:'.$item['thumbnail_height'].'px;';
+            }
+            if (isset($item['thumbnail_width'])) {
+                $style .= 'max-width:'.$item['thumbnail_width'].'px;';
+            }
+            echo html_writer::empty_tag('img', array('src' => $item['thumbnail'], 'style' => $style));
             echo '</td><td>';
             if (!empty($item['url'])) {
                 echo html_writer::link($item['url'], $item['title'], array('target'=>'_blank'));
@@ -206,14 +214,36 @@ case 'sign':
                 }
             }
             if (!empty($list['page'])) {
-                // TODO: need a better solution
-                $pagingurl = new moodle_url("$CFG->httpswwwroot/repository/filepicker.php?action=list&itemid=$itemid&ctx_id=$contextid&repo_id=$repo_id&course=$courseid");
-                echo $OUTPUT->paging_bar($list['total'], $list['page'] - 1, $list['perpage'], $pagingurl);
+                // TODO MDL-28482: need a better solution
+                // paging_bar is not a good option because it starts page numbering from 0 and
+                // repositories number pages starting from 1.
+                $pagingurl = new moodle_url("$CFG->httpswwwroot/repository/filepicker.php?action=list&itemid=$itemid&ctx_id=$contextid&repo_id=$repo_id&course=$courseid&sesskey=".  sesskey());
+                if (!isset($list['perpage']) && !isset($list['total'])) {
+                    $list['perpage'] = 10; // instead of setting perpage&total we use number of pages, the result is the same
+                }
+                if (empty($list['total'])) {
+                    if ($list['pages'] == -1) {
+                        $total = ($list['page'] + 2) * $list['perpage'];
+                    } else {
+                        $total = $list['pages'] * $list['perpage'];
+                    }
+                } else {
+                    $total = $list['total'];
+                }
+                echo $OUTPUT->paging_bar($total, $list['page'], $list['perpage'], $pagingurl);
             }
             echo '<table>';
             foreach ($list['list'] as $item) {
                 echo '<tr>';
-                echo '<td><img src="'.$item['thumbnail'].'" />';
+                echo '<td>';
+                $style = '';
+                if (isset($item['thumbnail_height'])) {
+                    $style .= 'max-height:'.$item['thumbnail_height'].'px;';
+                }
+                if (isset($item['thumbnail_width'])) {
+                    $style .= 'max-width:'.$item['thumbnail_width'].'px;';
+                }
+                echo html_writer::empty_tag('img', array('src' => $item['thumbnail'], 'style' => $style));
                 echo '</td><td>';
                 if (!empty($item['url'])) {
                     echo html_writer::link($item['url'], $item['title'], array('target'=>'_blank'));
@@ -286,7 +316,7 @@ case 'download':
 
 case 'confirm':
     echo $OUTPUT->header();
-    echo '<div><a href="'.me().'">'.get_string('back', 'repository').'</a></div>';
+    echo '<div><a href="'.s($PAGE->url(false)).'">'.get_string('back', 'repository').'</a></div>';
     echo '<img src="'.$thumbnail.'" />';
     echo '<form method="post">';
     echo '<table>';

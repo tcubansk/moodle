@@ -16,11 +16,16 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * @package moodlecore
- * @subpackage backup-moodle2
- * @copyright 2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * Defines restore_final_task class
+ *
+ * @package     core_backup
+ * @subpackage  moodle2
+ * @category    backup
+ * @copyright   2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+
+defined('MOODLE_INTERNAL') || die();
 
 /**
  * Final task that provides all the final steps necessary in order to finish one
@@ -55,8 +60,11 @@ class restore_final_task extends restore_task {
             $this->add_step(new restore_gradebook_structure_step('gradebook_step','gradebook.xml'));
         }
 
-        // Course completion
-        $this->add_step(new restore_course_completion_structure_step('course_completion', 'completion.xml'));
+        // Course completion, executed conditionally if restoring to new course
+        if ($this->get_target() !== backup::TARGET_CURRENT_ADDING &&
+            $this->get_target() !== backup::TARGET_EXISTING_ADDING) {
+            $this->add_step(new restore_course_completion_structure_step('course_completion', 'completion.xml'));
+        }
 
         // Review all the module_availability records in backup_ids in order
         // to match them with existing modules / grade items.

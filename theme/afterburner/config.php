@@ -12,6 +12,7 @@ $THEME->sheets = array(
     'afterburner_mod',
     'afterburner_calendar',
     'afterburner_dock',
+    'afterburner_settings',
     'rtl'
 );
 
@@ -58,6 +59,7 @@ $THEME->layouts = array(
         'file' => 'default.php',
         'regions' => array('side-pre', 'side-post'),
         'defaultregion' => 'side-post',
+        'options' => array('langmenu'=>true),
     ),
     // Server administration scripts.
     'admin' => array(
@@ -131,3 +133,5 @@ $THEME->layouts = array(
 $THEME->enable_dock = true;
 
 $THEME->rendererfactory = 'theme_overridden_renderer_factory';
+
+$THEME->csspostprocess = 'afterburner_process_css';

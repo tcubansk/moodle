@@ -27,10 +27,10 @@ class mod_choice_mod_form extends moodleform_mod {
 
 //-------------------------------------------------------------------------------
         $repeatarray = array();
-        $repeatarray[] = &MoodleQuickForm::createElement('header', '', get_string('option','choice').' {no}');
-        $repeatarray[] = &MoodleQuickForm::createElement('text', 'option', get_string('option','choice'));
-        $repeatarray[] = &MoodleQuickForm::createElement('text', 'limit', get_string('limit','choice'));
-        $repeatarray[] = &MoodleQuickForm::createElement('hidden', 'optionid', 0);
+        $repeatarray[] = $mform->createElement('header', '', get_string('option','choice').' {no}');
+        $repeatarray[] = $mform->createElement('text', 'option', get_string('option','choice'));
+        $repeatarray[] = $mform->createElement('text', 'limit', get_string('limit','choice'));
+        $repeatarray[] = $mform->createElement('hidden', 'optionid', 0);
 
         $menuoptions = array();
         $menuoptions[0] = get_string('disable');
@@ -49,10 +49,10 @@ class mod_choice_mod_form extends moodleform_mod {
         $repeateloptions = array();
         $repeateloptions['limit']['default'] = 0;
         $repeateloptions['limit']['disabledif'] = array('limitanswers', 'eq', 0);
-        $mform->setType('limit', PARAM_INT);
+        $repeateloptions['limit']['rule'] = 'numeric';
 
         $repeateloptions['option']['helpbutton'] = array('choiceoptions', 'choice');
-        $mform->setType('option', PARAM_CLEAN);
+        $mform->setType('option', PARAM_CLEANHTML);
 
         $mform->setType('optionid', PARAM_INT);
 

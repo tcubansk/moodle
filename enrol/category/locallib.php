@@ -33,7 +33,7 @@ defined('MOODLE_INTERNAL') || die();
  * it may fail sometimes, so we always do a full sync in cron too.
  */
 class enrol_category_handler {
-    public function role_assigned($ra) {
+    public static function role_assigned($ra) {
         global $DB;
 
         if (!enrol_is_enabled('category')) {
@@ -84,7 +84,7 @@ class enrol_category_handler {
         return true;
     }
 
-    public function role_unassigned($ra) {
+    public static function role_unassigned($ra) {
         global $DB;
 
         if (!enrol_is_enabled('category')) {
@@ -99,7 +99,9 @@ class enrol_category_handler {
 
         // now this is going to be a bit slow, take all enrolments in child courses and verify each separately
         $syscontext = get_context_instance(CONTEXT_SYSTEM);
-        $roles = get_roles_with_capability('enrol/category:synchronised', CAP_ALLOW, $syscontext);
+        if (!$roles = get_roles_with_capability('enrol/category:synchronised', CAP_ALLOW, $syscontext)) {
+            return true;
+        }
 
         $plugin = enrol_get_plugin('category');
 

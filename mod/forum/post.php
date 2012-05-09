@@ -113,7 +113,7 @@ if (!empty($forum)) {      // User is starting a new discussion in a forum
         if (!isguestuser()) {
             if (!is_enrolled($coursecontext)) {
                 if (enrol_selfenrol_available($course->id)) {
-                    $SESSION->wantsurl = $FULLME;
+                    $SESSION->wantsurl = qualified_me();
                     $SESSION->enrolcancel = $_SERVER['HTTP_REFERER'];
                     redirect($CFG->wwwroot.'/enrol/index.php?id='.$course->id, get_string('youneedtoenrol'));
                 }
@@ -181,7 +181,7 @@ if (!empty($forum)) {      // User is starting a new discussion in a forum
     if (! forum_user_can_post($forum, $discussion, $USER, $cm, $course, $modcontext)) {
         if (!isguestuser()) {
             if (!is_enrolled($coursecontext)) {  // User is a guest here!
-                $SESSION->wantsurl = $FULLME;
+                $SESSION->wantsurl = qualified_me();
                 $SESSION->enrolcancel = $_SERVER['HTTP_REFERER'];
                 redirect($CFG->wwwroot.'/enrol/index.php?id='.$course->id, get_string('youneedtoenrol'));
             }
@@ -460,6 +460,8 @@ if (!empty($forum)) {      // User is starting a new discussion in a forum
 
         $course = $DB->get_record('course', array('id' => $forum->course));
 
+        $PAGE->set_cm($cm);
+        $PAGE->set_context($modcontext);
         $PAGE->navbar->add(format_string($post->subject, true), new moodle_url('/mod/forum/discuss.php', array('d'=>$discussion->id)));
         $PAGE->navbar->add(get_string("prune", "forum"));
         $PAGE->set_title(format_string($discussion->name).": ".format_string($post->subject));
@@ -513,6 +515,7 @@ file_prepare_draft_area($draftitemid, $modcontext->id, 'mod_forum', 'attachment'
 //load data into form NOW!
 
 if ($USER->id != $post->userid) {   // Not the original author, so add a message to the end
+    $data = new stdClass();
     $data->date = userdate($post->modified);
     if ($post->messageformat == FORMAT_HTML) {
         $data->name = '<a href="'.$CFG->wwwroot.'/user/view.php?id='.$USER->id.'&course='.$post->course.'">'.
@@ -522,6 +525,7 @@ if ($USER->id != $post->userid) {   // Not the original author, so add a message
         $data->name = fullname($USER);
         $post->message .= "\n\n(".get_string('editedby', 'forum', $data).')';
     }
+    unset($data);
 }
 
 if (!empty($parent)) {
@@ -597,6 +601,8 @@ if ($fromform = $mform_post->get_data()) {
     // WARNING: the $fromform->message array has been overwritten, do not use it anymore!
     $fromform->messagetrust  = trusttext_trusted($modcontext);
 
+    $contextcheck = isset($fromform->groupinfo) && has_capability('mod/forum:movediscussions', $modcontext);
+
     if ($fromform->edit) {           // Updating a post
         unset($fromform->groupid);
         $fromform->id = $fromform->edit;
@@ -617,6 +623,11 @@ if ($fromform = $mform_post->get_data()) {
                             || has_capability('mod/forum:startdiscussion', $modcontext))) ||
                             has_capability('mod/forum:editanypost', $modcontext)) ) {
             print_error('cannotupdatepost', 'forum');
+        }
+
+        // If the user has access to all groups and they are changing the group, then update the post.
+        if ($contextcheck) {
+            $DB->set_field('forum_discussions' ,'groupid' , $fromform->groupinfo, array('firstpost' => $fromform->id));
         }
 
         $updatepost = $fromform; //realpost
@@ -710,6 +721,10 @@ if ($fromform = $mform_post->get_data()) {
         if (!forum_user_can_post_discussion($forum, $fromform->groupid, -1, $cm, $modcontext)) {
             print_error('cannotcreatediscussion', 'forum');
         }
+        // If the user has access all groups capability let them choose the group.
+        if ($contextcheck) {
+            $fromform->groupid = $fromform->groupinfo;
+        }
         if (empty($fromform->groupid)) {
             $fromform->groupid = -1;
         }
@@ -779,6 +794,7 @@ if ($post->discussion) {
         print_error('cannotfindparentpost', 'forum', '', $post->id);
     }
 } else {
+    $toppost = new stdClass();
     $toppost->subject = ($forum->type == "news") ? get_string("addanewtopic", "forum") :
                                                    get_string("addanewdiscussion", "forum");
 }

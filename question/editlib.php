@@ -54,15 +54,11 @@ function get_module_from_cmid($cmid) {
 * @param bool $noparent if true only questions with NO parent will be selected
 * @param bool $recurse include subdirectories
 * @param bool $export set true if this is called by questionbank export
-* @author added by Howard Miller June 2004
 */
 function get_questions_category( $category, $noparent=false, $recurse=true, $export=true ) {
     global $DB;
 
-    // questions will be added to an array
-    $qresults = array();
-
-    // build sql bit for $noparent
+    // Build sql bit for $noparent
     $npsql = '';
     if ($noparent) {
       $npsql = " and parent='0' ";
@@ -75,16 +71,21 @@ function get_questions_category( $category, $noparent=false, $recurse=true, $exp
         $categorylist = array($category->id);
     }
 
-    // get the list of questions for the category
+    // Get the list of questions for the category
     list($usql, $params) = $DB->get_in_or_equal($categorylist);
-    if ($questions = $DB->get_records_select('question', "category $usql $npsql", $params, 'qtype, name')) {
+    $questions = $DB->get_records_select('question', "category $usql $npsql", $params, 'qtype, name');
 
-        // iterate through questions, getting stuff we need
-        foreach($questions as $question) {
-            $question->export_process = $export;
-            question_bank::get_qtype($question->qtype)->get_question_options($question);
-            $qresults[] = $question;
+    // Iterate through questions, getting stuff we need
+    $qresults = array();
+    foreach($questions as $key => $question) {
+        $question->export_process = $export;
+        $qtype = question_bank::get_qtype($question->qtype, false);
+        if ($export && $qtype->name() == 'missingtype') {
+            // Unrecognised question type. Skip this question when exporting.
+            continue;
         }
+        $qtype->get_question_options($question);
+        $qresults[] = $question;
     }
 
     return $qresults;
@@ -406,6 +407,7 @@ class question_bank_checkbox_column extends question_bank_column_base {
         echo '<input title="' . $this->strselect . '" type="checkbox" name="q' .
                 $question->id . '" id="checkq' . $question->id . '" value="1"/>';
         if ($this->firstrow) {
+            $PAGE->requires->js('/question/qbank.js');
             $PAGE->requires->js_function_call('question_bank.init_checkbox_column', array(get_string('selectall'),
                     get_string('deselectall'), 'checkq' . $question->id));
             $this->firstrow = false;
@@ -605,7 +607,8 @@ abstract class question_bank_action_column_base extends question_bank_column_bas
     }
 
     public function get_required_fields() {
-        return array('q.id');
+        // createdby is required for permission checks.
+        return array('q.id, q.createdby');
     }
 }
 
@@ -631,10 +634,9 @@ class question_bank_edit_action_column extends question_bank_action_column_base 
     }
 
     protected function display_content($question, $rowclasses) {
-        if (question_has_capability_on($question, 'edit') ||
-                question_has_capability_on($question, 'move')) {
+        if (question_has_capability_on($question, 'edit')) {
             $this->print_icon('t/edit', $this->stredit, $this->qbank->edit_question_url($question->id));
-        } else {
+        } else if (question_has_capability_on($question, 'view')) {
             $this->print_icon('i/info', $this->strview, $this->qbank->edit_question_url($question->id));
         }
     }
@@ -791,16 +793,22 @@ class question_bank_question_text_row extends question_bank_row_base {
     }
 
     protected function display_content($question, $rowclasses) {
-        $text = format_text($question->questiontext, $question->questiontextformat,
-                $this->formatoptions, $this->qbank->get_courseid());
+        $text = question_rewrite_questiontext_preview_urls($question->questiontext,
+                $question->contextid, 'question', $question->id);
+        $text = format_text($text, $question->questiontextformat,
+                $this->formatoptions);
         if ($text == '') {
             $text = '&#160;';
         }
         echo $text;
     }
 
+    public function get_extra_joins() {
+        return array('qc' => 'JOIN {question_categories} qc ON qc.id = q.category');
+    }
+
     public function get_required_fields() {
-        return array('q.questiontext', 'q.questiontextformat');
+        return array('q.id', 'q.questiontext', 'q.questiontextformat', 'qc.contextid');
     }
 }
 
@@ -865,7 +873,7 @@ class question_bank_view {
         }
 
         // Create the url of the new question page to forward to.
-        $returnurl = str_replace($CFG->wwwroot, '', $pageurl->out(false));
+        $returnurl = $pageurl->out_as_local_url(false);
         $this->editquestionurl = new moodle_url('/question/question.php',
                 array('returnurl' => $returnurl));
         if ($cm !== null){
@@ -959,7 +967,7 @@ class question_bank_view {
     }
 
     /**
-     * Deal with a sort name of the forum columnname, or colname_subsort by
+     * Deal with a sort name of the form columnname, or colname_subsort by
      * breaking it up, validating the bits that are presend, and returning them.
      * If there is no subsort, then $subsort is returned as ''.
      * @return array array($colname, $subsort).
@@ -1096,14 +1104,14 @@ class question_bank_view {
         $sorts = array();
         foreach ($this->sort as $sort => $order) {
             list($colname, $subsort) = $this->parse_subsort($sort);
-            $sorts[] = $this->knowncolumntypes[$colname]->sort_expression($order < 0, $subsort);
+            $sorts[] = $this->requiredcolumns[$colname]->sort_expression($order < 0, $subsort);
         }
 
     /// Build the where clause.
-        $tests = array('parent = 0');
+        $tests = array('q.parent = 0');
 
         if (!$showhidden) {
-            $tests[] = 'hidden = 0';
+            $tests[] = 'q.hidden = 0';
         }
 
         if ($recurse) {
@@ -1198,7 +1206,7 @@ class question_bank_view {
 
     protected function print_choose_category_message($categoryandcontext) {
         echo "<p style=\"text-align:center;\"><b>";
-        print_string("selectcategoryabove", "question");
+        print_string('selectcategoryabove', 'question');
         echo "</b></p>";
     }
 
@@ -1354,10 +1362,10 @@ class question_bank_view {
         echo $OUTPUT->render($pagingbar);
         if ($totalnumber > DEFAULT_QUESTIONS_PER_PAGE) {
             if ($perpage == DEFAULT_QUESTIONS_PER_PAGE) {
-                $url = new moodle_url('edit.php', ($pageurl->params()+array('qperpage'=>1000)));
+                $url = new moodle_url('edit.php', array_merge($pageurl->params(), array('qperpage'=>1000)));
                 $showall = '<a href="'.$url.'">'.get_string('showall', 'moodle', $totalnumber).'</a>';
             } else {
-                $url = new moodle_url('edit.php', ($pageurl->params()+array('qperpage'=>DEFAULT_QUESTIONS_PER_PAGE)));
+                $url = new moodle_url('edit.php', array_merge($pageurl->params(), array('qperpage'=>DEFAULT_QUESTIONS_PER_PAGE)));
                 $showall = '<a href="'.$url.'">'.get_string('showperpage', 'moodle', DEFAULT_QUESTIONS_PER_PAGE).'</a>';
             }
             echo "<div class='paging'>$showall</div>";
@@ -1424,9 +1432,7 @@ class question_bank_view {
         if ($question->id == $this->lastchangedid) {
             $classes[] ='highlight';
         }
-        if (!empty($this->extrarows)) {
-            $classes[] = 'r' . ($rowcount % 2);
-        }
+        $classes[] = 'r' . ($rowcount % 2);
         return $classes;
     }
 
@@ -1695,12 +1701,6 @@ function question_edit_setup($edittab, $baseurl, $requirecmid = false, $requirec
 }
 
 /**
- * Required for legacy reasons. Was originally global then changed to class static
- * as of Moodle 2.0
- */
-$QUESTION_EDITTABCAPS = question_edit_contexts::$caps;
-
-/**
  * Make sure user is logged in as required in this context.
  */
 function require_login_in_context($contextorid = null){
@@ -1736,9 +1736,11 @@ function require_login_in_context($contextorid = null){
  * Print a form to let the user choose which question type to add.
  * When the form is submitted, it goes to the question.php script.
  * @param $hiddenparams hidden parameters to add to the form, in addition to
- * the qtype radio buttons.
+ *      the qtype radio buttons.
+ * @param $allowedqtypes optional list of qtypes that are allowed. If given, only
+ *      those qtypes will be shown. Example value array('description', 'multichoice').
  */
-function print_choose_qtype_to_add_form($hiddenparams) {
+function print_choose_qtype_to_add_form($hiddenparams, array $allowedqtypes = null) {
     global $CFG, $PAGE, $OUTPUT;
     $PAGE->requires->js('/question/qbank.js');
     echo '<div id="chooseqtypehead" class="hd">' . "\n";
@@ -1754,7 +1756,10 @@ function print_choose_qtype_to_add_form($hiddenparams) {
     echo '<div class="instruction">' . get_string('selectaqtypefordescription', 'question') . "</div>\n";
     echo '<div class="realqtypes">' . "\n";
     $fakeqtypes = array();
-    foreach (question_bank::get_creatable_qtypes() as $qtype) {
+    foreach (question_bank::get_creatable_qtypes() as $qtypename => $qtype) {
+        if ($allowedqtypes && !in_array($qtypename, $allowedqtypes)) {
+            continue;
+        }
         if ($qtype->is_real_question_type()) {
             print_qtype_to_add_option($qtype);
         } else {
@@ -1778,18 +1783,19 @@ function print_choose_qtype_to_add_form($hiddenparams) {
 
 /**
  * Private function used by the preceding one.
- * @param $qtype the question type.
+ * @param question_type $qtype the question type.
  */
 function print_qtype_to_add_option($qtype) {
     echo '<div class="qtypeoption">' . "\n";
-    echo '<label for="qtype_' . $qtype->name() . '">';
-    echo '<input type="radio" name="qtype" id="qtype_' . $qtype->name() . '" value="' . $qtype->name() . '" />';
+    echo '<label for="' . $qtype->plugin_name() . '">';
+    echo '<input type="radio" name="qtype" id="' . $qtype->plugin_name() .
+            '" value="' . $qtype->name() . '" />';
     echo '<span class="qtypename">';
     $fakequestion = new stdClass();
     $fakequestion->qtype = $qtype->name();
-    print_question_icon($fakequestion);
+    echo print_question_icon($fakequestion);
     echo $qtype->menu_name() . '</span><span class="qtypesummary">' .
-            get_string($qtype->name() . 'summary', 'qtype_' . $qtype->name());
+            get_string('pluginnamesummary', $qtype->plugin_name());
     echo "</span></label>\n";
     echo "</div>\n";
 }

@@ -150,8 +150,6 @@ function blog_sync_external_entries($externalblog) {
     $rssfile = new moodle_simplepie_file($externalblog->url);
     $filetest = new SimplePie_Locator($rssfile);
 
-    $textlib = textlib_get_instance(); // Going to use textlib services
-
     if (!$filetest->is_feed($rssfile)) {
         $externalblog->failedlastsync = 1;
         $DB->update_record('blog_external', $externalblog);
@@ -203,8 +201,8 @@ function blog_sync_external_entries($externalblog) {
         $newentry->subject = clean_param($entry->get_title(), PARAM_TEXT);
         // Observe 128 max chars in DB
         // TODO: +1 to raise this to 255
-        if ($textlib->strlen($newentry->subject) > 128) {
-            $newentry->subject = $textlib->substr($newentry->subject, 0, 125) . '...';
+        if (textlib::strlen($newentry->subject) > 128) {
+            $newentry->subject = textlib::substr($newentry->subject, 0, 125) . '...';
         }
         $newentry->summary = $entry->get_description();
 
@@ -239,8 +237,7 @@ function blog_sync_external_entries($externalblog) {
             $oldesttimestamp = $timestamp;
         }
 
-        $textlib = textlib_get_instance();
-        if ($textlib->strlen($newentry->uniquehash) > 255) {
+        if (textlib::strlen($newentry->uniquehash) > 255) {
             // The URL for this item is too long for the field. Rather than add
             // the entry without the link we will skip straight over it.
             // RSS spec says recommended length 500, we use 255.
@@ -314,7 +311,7 @@ function blog_get_context_url($context=null) {
 
     // Change contextlevel to SYSTEM if viewing the site course
     if ($context->contextlevel == CONTEXT_COURSE && $context->instanceid == SITEID) {
-        $context->contextlevel = CONTEXT_SYSTEM;
+        $context = context_system::instance();
     }
 
     $filterparam = '';
@@ -479,6 +476,13 @@ function blog_get_options_for_user(stdClass $user=null) {
             );
         }
     }
+    if ($canview && $CFG->enablerssfeeds) {
+        $options['rss'] = array(
+            'string' => get_string('rssfeed', 'blog'),
+            'link' => new moodle_url(rss_get_url($sitecontext->id, $USER->id, 'blog', 'user/'.$user->id))
+       );
+    }
+
     // Cache the options
     $useroptions[$user->id] = $options;
     // Return the options
@@ -522,7 +526,10 @@ function blog_get_options_for_course(stdClass $course, stdClass $user=null) {
         return $courseoptions[$key];
     }
 
-    if (has_capability('moodle/blog:view', get_context_instance(CONTEXT_COURSE, $course->id))) {
+    $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
+    $canparticipate = (is_enrolled($coursecontext) or is_viewing($coursecontext));
+
+    if (has_capability('moodle/blog:view', $coursecontext)) {
         // We can view!
         if ($CFG->bloglevel >= BLOG_SITE_LEVEL) {
             // View entries about this course
@@ -545,7 +552,7 @@ function blog_get_options_for_course(stdClass $course, stdClass $user=null) {
         }
     }
 
-    if (has_capability('moodle/blog:create', $sitecontext)) {
+    if (has_capability('moodle/blog:create', $sitecontext) and $canparticipate) {
         // We can blog about this course
         $options['courseadd'] = array(
             'string' => get_string('blogaboutthiscourse', 'blog'),
@@ -597,7 +604,10 @@ function blog_get_options_for_module($module, $user=null) {
         return $moduleoptions[$module->id];
     }
 
-    if (has_capability('moodle/blog:view', get_context_instance(CONTEXT_MODULE, $module->id))) {
+    $modcontext = get_context_instance(CONTEXT_MODULE, $module->id);
+    $canparticipate = (is_enrolled($modcontext) or is_viewing($modcontext));
+
+    if (has_capability('moodle/blog:view', $modcontext)) {
         // We can view!
         if ($CFG->bloglevel >= BLOG_SITE_LEVEL) {
             // View all entries about this module
@@ -625,7 +635,7 @@ function blog_get_options_for_module($module, $user=null) {
         }
     }
 
-    if (has_capability('moodle/blog:create', $sitecontext)) {
+    if (has_capability('moodle/blog:create', $sitecontext) and $canparticipate) {
         // The user can blog about this module
         $options['moduleadd'] = array(
             'string' => get_string('blogaboutthismodule', 'blog', $module->modname),
@@ -989,6 +999,9 @@ function blog_get_associated_count($courseid, $cmid=null) {
  * Capability check has been done in comment->check_permissions(), we
  * don't need to do it again here.
  *
+ * @package  core_blog
+ * @category comment
+ *
  * @param stdClass $comment_param {
  *              context  => context the context object
  *              courseid => int course id
@@ -1004,6 +1017,9 @@ function blog_comment_permissions($comment_param) {
 
 /**
  * Validate comment parameter before perform other comments actions
+ *
+ * @package  core_blog
+ * @category comment
  *
  * @param stdClass $comment {
  *              context  => context the context object

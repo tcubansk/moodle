@@ -197,7 +197,7 @@ class data_field_picture extends data_field_base {
         return true;
     }
 
-    function update_content($recordid, $value, $name) {
+    function update_content($recordid, $value, $name='') {
         global $CFG, $DB, $USER;
 
         if (!$content = $DB->get_record('data_content', array('fieldid'=>$this->field->id, 'recordid'=>$recordid))) {
@@ -266,6 +266,7 @@ class data_field_picture extends data_field_base {
             $fs->convert_image($file_record, $file, $this->field->param4, $this->field->param5, true);
             return true;
         } catch (Exception $e) {
+            debugging($e->getMessage());
             return false;
         }
     }

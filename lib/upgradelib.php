@@ -98,6 +98,55 @@ class plugin_defective_exception extends moodle_exception {
 }
 
 /**
+ * Sets maximum expected time needed for upgrade task.
+ * Please always make sure that upgrade will not run longer!
+ *
+ * The script may be automatically aborted if upgrade times out.
+ *
+ * @category upgrade
+ * @param int $max_execution_time in seconds (can not be less than 60 s)
+ */
+function upgrade_set_timeout($max_execution_time=300) {
+    global $CFG;
+
+    if (!isset($CFG->upgraderunning) or $CFG->upgraderunning < time()) {
+        $upgraderunning = get_config(null, 'upgraderunning');
+    } else {
+        $upgraderunning = $CFG->upgraderunning;
+    }
+
+    if (!$upgraderunning) {
+        if (CLI_SCRIPT) {
+            // never stop CLI upgrades
+            $upgraderunning = 0;
+        } else {
+            // web upgrade not running or aborted
+            print_error('upgradetimedout', 'admin', "$CFG->wwwroot/$CFG->admin/");
+        }
+    }
+
+    if ($max_execution_time < 60) {
+        // protection against 0 here
+        $max_execution_time = 60;
+    }
+
+    $expected_end = time() + $max_execution_time;
+
+    if ($expected_end < $upgraderunning + 10 and $expected_end > $upgraderunning - 10) {
+        // no need to store new end, it is nearly the same ;-)
+        return;
+    }
+
+    if (CLI_SCRIPT) {
+        // there is no point in timing out of CLI scripts, admins can stop them if necessary
+        set_time_limit(0);
+    } else {
+        set_time_limit($max_execution_time);
+    }
+    set_config('upgraderunning', $expected_end); // keep upgrade locked until this time
+}
+
+/**
  * Upgrade savepoint, marks end of each upgrade block.
  * It stores new main version, resets upgrade timeout
  * and abort upgrade if user cancels page loading.
@@ -105,7 +154,7 @@ class plugin_defective_exception extends moodle_exception {
  * Please do not make large upgrade blocks with lots of operations,
  * for example when adding tables keep only one table operation per block.
  *
- * @global object
+ * @category upgrade
  * @param bool $result false if upgrade step failed, true if completed
  * @param string or float $version main version
  * @param bool $allowabort allow user to abort script execution here
@@ -146,7 +195,7 @@ function upgrade_main_savepoint($result, $version, $allowabort=true) {
  * It stores module version, resets upgrade timeout
  * and abort upgrade if user cancels page loading.
  *
- * @global object
+ * @category upgrade
  * @param bool $result false if upgrade step failed, true if completed
  * @param string or float $version main version
  * @param string $modname name of module
@@ -186,7 +235,7 @@ function upgrade_mod_savepoint($result, $version, $modname, $allowabort=true) {
  * It stores block version, resets upgrade timeout
  * and abort upgrade if user cancels page loading.
  *
- * @global object
+ * @category upgrade
  * @param bool $result false if upgrade step failed, true if completed
  * @param string or float $version main version
  * @param string $blockname name of block
@@ -226,6 +275,7 @@ function upgrade_block_savepoint($result, $version, $blockname, $allowabort=true
  * It stores plugin version, resets upgrade timeout
  * and abort upgrade if user cancels page loading.
  *
+ * @category upgrade
  * @param bool $result false if upgrade step failed, true if completed
  * @param string or float $version main version
  * @param string $type name of plugin
@@ -257,6 +307,43 @@ function upgrade_plugin_savepoint($result, $version, $type, $plugin, $allowabort
     }
 }
 
+/**
+ * Detect if there are leftovers in PHP source files.
+ *
+ * During main version upgrades administrators MUST move away
+ * old PHP source files and start from scratch (or better
+ * use git).
+ *
+ * @return bool true means borked upgrade, false means previous PHP files were properly removed
+ */
+function upgrade_stale_php_files_present() {
+    global $CFG;
+
+    $someexamplesofremovedfiles = array(
+        // removed in 2.3dev
+        '/lib/minify/builder/',
+        // removed in 2.2dev
+        '/lib/yui/3.4.1pr1/',
+        // removed in 2.2
+        '/search/cron_php5.php',
+        '/course/report/log/indexlive.php',
+        '/admin/report/backups/index.php',
+        '/admin/generator.php',
+        // removed in 2.1
+        '/lib/yui/2.8.0r4/',
+        // removed in 2.0
+        '/blocks/admin/block_admin.php',
+        '/blocks/admin_tree/block_admin_tree.php',
+    );
+
+    foreach ($someexamplesofremovedfiles as $file) {
+        if (file_exists($CFG->dirroot.$file)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 /**
  * Upgrade plugins
@@ -276,6 +363,8 @@ function upgrade_plugins($type, $startcallback, $endcallback, $verbose) {
     $plugs = get_plugin_list($type);
 
     foreach ($plugs as $plug=>$fullplug) {
+        // Reset time so that it works when installing a large number of plugins
+        set_time_limit(600);
         $component = clean_param($type.'_'.$plug, PARAM_COMPONENT); // standardised plugin name
 
         // check plugin dir is valid name
@@ -465,6 +554,10 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
             }
         }
 
+        if (empty($module->cron)) {
+            $module->cron = 0;
+        }
+
         // all modules must have en lang pack
         if (!is_readable("$fullmod/lang/en/$mod.php")) {
             throw new plugin_defective_exception($component, 'Missing mandatory en language pack.');
@@ -508,7 +601,7 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
                 require_once("$fullmod/db/install.php");
                 // Set installation running flag, we need to recover after exception or error
                 set_config('installrunning', 1, $module->name);
-                $post_install_function = 'xmldb_'.$module->name.'_install';;
+                $post_install_function = 'xmldb_'.$module->name.'_install';
                 $post_install_function();
                 unset_config('installrunning', $module->name);
             }
@@ -542,7 +635,12 @@ function upgrade_plugins_modules($startcallback, $endcallback, $verbose) {
                 upgrade_mod_savepoint($result, $module->version, $mod, false);
             }
 
-        /// Upgrade various components
+            // update cron flag if needed
+            if ($currmodule->cron != $module->cron) {
+                $DB->set_field('modules', 'cron', $module->cron, array('name' => $module->name));
+            }
+
+            // Upgrade various components
             update_capabilities($component);
             log_update_descriptions($component);
             external_update_descriptions($component);
@@ -822,11 +920,12 @@ function log_update_descriptions($component) {
  * @return void
  */
 function external_update_descriptions($component) {
-    global $DB;
+    global $DB, $CFG;
 
     $defpath = get_component_directory($component).'/db/services.php';
 
     if (!file_exists($defpath)) {
+        require_once($CFG->dirroot.'/lib/externallib.php');
         external_delete_descriptions($component);
         return;
     }
@@ -890,6 +989,7 @@ function external_update_descriptions($component) {
     $dbservices = $DB->get_records('external_services', array('component'=>$component));
     foreach ($dbservices as $dbservice) {
         if (empty($services[$dbservice->name])) {
+            $DB->delete_records('external_tokens', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services_functions', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services_users', array('externalserviceid'=>$dbservice->id));
             $DB->delete_records('external_services', array('id'=>$dbservice->id));
@@ -900,6 +1000,7 @@ function external_update_descriptions($component) {
         $service['enabled'] = empty($service['enabled']) ? 0 : $service['enabled'];
         $service['requiredcapability'] = empty($service['requiredcapability']) ? null : $service['requiredcapability'];
         $service['restrictedusers'] = !isset($service['restrictedusers']) ? 1 : $service['restrictedusers'];
+        $service['downloadfiles'] = !isset($service['downloadfiles']) ? 0 : $service['downloadfiles'];
         $service['shortname'] = !isset($service['shortname']) ? null : $service['shortname'];
 
         $update = false;
@@ -909,6 +1010,10 @@ function external_update_descriptions($component) {
         }
         if ($dbservice->restrictedusers != $service['restrictedusers']) {
             $dbservice->restrictedusers = $service['restrictedusers'];
+            $update = true;
+        }
+        if ($dbservice->downloadfiles != $service['downloadfiles']) {
+            $dbservice->downloadfiles = $service['downloadfiles'];
             $update = true;
         }
         //if shortname is not a PARAM_ALPHANUMEXT, fail (tested here for service update and creation)
@@ -964,6 +1069,7 @@ function external_update_descriptions($component) {
         $dbservice->enabled            = empty($service['enabled']) ? 0 : $service['enabled'];
         $dbservice->requiredcapability = empty($service['requiredcapability']) ? null : $service['requiredcapability'];
         $dbservice->restrictedusers    = !isset($service['restrictedusers']) ? 1 : $service['restrictedusers'];
+        $dbservice->downloadfiles      = !isset($service['downloadfiles']) ? 0 : $service['downloadfiles'];
         $dbservice->shortname          = !isset($service['shortname']) ? null : $service['shortname'];
         $dbservice->component          = $component;
         $dbservice->timecreated        = time();
@@ -975,22 +1081,6 @@ function external_update_descriptions($component) {
             $DB->insert_record('external_services_functions', $newf);
         }
     }
-}
-
-/**
- * Delete all service and external functions information defined in the specified component.
- * @param string $component name of component (moodle, mod_assignment, etc.)
- * @return void
- */
-function external_delete_descriptions($component) {
-    global $DB;
-
-    $params = array($component);
-
-    $DB->delete_records_select('external_services_users', "externalserviceid IN (SELECT id FROM {external_services} WHERE component = ?)", $params);
-    $DB->delete_records_select('external_services_functions', "externalserviceid IN (SELECT id FROM {external_services} WHERE component = ?)", $params);
-    $DB->delete_records('external_services', array('component'=>$component));
-    $DB->delete_records('external_functions', array('component'=>$component));
 }
 
 /**
@@ -1196,18 +1286,6 @@ function upgrade_setup_debug($starting) {
     } else {
         $DB->set_debug($originaldebug);
     }
-}
-
-/**
- * @global object
- */
-function print_upgrade_reload($url) {
-    global $OUTPUT;
-
-    echo "<br />";
-    echo '<div class="continuebutton">';
-    echo '<a href="'.$url.'" title="'.get_string('reload').'" ><img src="'.$OUTPUT->pix_url('i/reload') . '" alt="" /> '.get_string('reload').'</a>';
-    echo '</div><br />';
 }
 
 function print_upgrade_separator() {
@@ -1417,11 +1495,11 @@ function upgrade_core($version, $verbose) {
         purge_all_caches();
 
         // Clean up contexts - more and more stuff depends on existence of paths and contexts
-        cleanup_contexts();
-        create_contexts();
-        build_context_path();
-        $syscontext = get_context_instance(CONTEXT_SYSTEM);
-        mark_context_dirty($syscontext->path);
+        context_helper::cleanup_instances();
+        context_helper::create_instances(null, false);
+        context_helper::build_all_paths(false);
+        $syscontext = context_system::instance();
+        $syscontext->mark_dirty();
 
         print_upgrade_part_end('moodle', false, $verbose);
     } catch (Exception $ex) {
@@ -1667,7 +1745,8 @@ function upgrade_plugin_mnet_functions($component) {
  * @return array
  */
 function admin_mnet_method_profile(Zend_Server_Reflection_Function_Abstract $function) {
-    $proto = array_pop($function->getPrototypes());
+    $protos = $function->getPrototypes();
+    $proto = array_pop($protos);
     $ret = $proto->getReturnValue();
     $profile = array(
         'parameters' =>  array(),

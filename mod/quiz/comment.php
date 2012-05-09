@@ -40,7 +40,7 @@ if (!$attemptobj->is_finished()) {
 }
 
 // Check login and permissions.
-require_login($attemptobj->get_courseid(), false, $attemptobj->get_cm());
+require_login($attemptobj->get_course(), false, $attemptobj->get_cm());
 $attemptobj->require_capability('mod/quiz:grade');
 
 // Log this action.
@@ -57,7 +57,7 @@ echo $OUTPUT->heading(format_string($attemptobj->get_question_name($slot)));
 if (data_submitted() && confirm_sesskey()) {
     if (optional_param('submit', false, PARAM_BOOL)) {
         $transaction = $DB->start_delegated_transaction();
-        $attemptobj->process_all_actions(time());
+        $attemptobj->process_submitted_actions(time());
         $transaction->allow_commit();
         echo $OUTPUT->notification(get_string('changessaved'), 'notifysuccess');
         close_window(2, true);

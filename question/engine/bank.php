@@ -42,6 +42,9 @@ require_once(dirname(__FILE__) . '/../type/questiontypebase.php');
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 abstract class question_bank {
+    // TODO: This limit can be deleted if someday we move all TEXTS to BIG ones. MDL-19603
+    const MAX_SUMMARY_LENGTH = 32000;
+
     /** @var array question type name => question_type subclass. */
     private static $questiontypes = array();
 
@@ -321,7 +324,7 @@ abstract class question_bank {
         self::$testdata[$question->id] = $question;
     }
 
-    protected function ensure_fraction_options_initialised() {
+    protected static function ensure_fraction_options_initialised() {
         if (!is_null(self::$fractionoptions)) {
             return;
         }

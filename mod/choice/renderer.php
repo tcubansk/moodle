@@ -46,10 +46,13 @@ class mod_choice_renderer extends plugin_renderer_base {
         $html .= html_writer::start_tag('ul', array('class'=>'choices' ));
 
         $availableoption = count($options['options']);
+        $choicecount = 0;
         foreach ($options['options'] as $option) {
+            $choicecount++;
             $html .= html_writer::start_tag('li', array('class'=>'option'));
             $option->attributes->name = 'answer';
             $option->attributes->type = 'radio';
+            $option->attributes->id = 'choice_'.$choicecount;
 
             $labeltext = $option->text;
             if (!empty($option->attributes->disabled)) {
@@ -58,7 +61,7 @@ class mod_choice_renderer extends plugin_renderer_base {
             }
 
             $html .= html_writer::empty_tag('input', (array)$option->attributes);
-            $html .= html_writer::tag('label', $labeltext, array('for'=>$option->attributes->name));
+            $html .= html_writer::tag('label', $labeltext, array('for'=>$option->attributes->id));
             $html .= html_writer::end_tag('li');
         }
         $html .= html_writer::tag('li','', array('class'=>'clearfloat'));
@@ -204,11 +207,11 @@ class mod_choice_renderer extends plugin_renderer_base {
         if ($choices->viewresponsecapability && $choices->deleterepsonsecapability) {
             $selecturl = new moodle_url('#');
 
-            $selectallactions = new component_action('click',"select_all_in", array('div',null,'tablecontainer'));
+            $selectallactions = new component_action('click',"checkall");
             $selectall = new action_link($selecturl, get_string('selectall'), $selectallactions);
             $actiondata .= $this->output->render($selectall) . ' / ';
 
-            $deselectallactions = new component_action('click',"deselect_all_in", array('div',null,'tablecontainer'));
+            $deselectallactions = new component_action('click',"checknone");
             $deselectall = new action_link($selecturl, get_string('deselectall'), $deselectallactions);
             $actiondata .= $this->output->render($deselectall);
 

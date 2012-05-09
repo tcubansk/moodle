@@ -49,7 +49,7 @@ if (!empty($id)) {
 
 $PAGE->set_url('/mod/scorm/loadSCO.php', array('scoid'=>$scoid, 'id'=>$cm->id));
 
-require_login($course->id, false, $cm);
+require_login($course, false, $cm);
 
 //check if scorm closed
 $timenow = time();
@@ -108,11 +108,16 @@ if ((isset($sco->parameters) && (!empty($sco->parameters))) || ($version == 'AIC
 }
 
 if ($version == 'AICC') {
+    require_once("$CFG->dirroot/mod/scorm/datamodels/aicclib.php");
+    $aicc_sid = scorm_aicc_get_hacp_session($scorm->id);
+    if (empty($aicc_sid)) {
+        $aicc_sid = sesskey();
+    }
     $sco_params = '';
     if (isset($sco->parameters) && (!empty($sco->parameters))) {
         $sco_params = '&'. $sco->parameters;
     }
-    $launcher = $sco->launch.$connector.'aicc_sid='.sesskey().'&aicc_url='.$CFG->wwwroot.'/mod/scorm/aicc.php'.$sco_params;
+    $launcher = $sco->launch.$connector.'aicc_sid='.$aicc_sid.'&aicc_url='.$CFG->wwwroot.'/mod/scorm/aicc.php'.$sco_params;
 } else {
     if (isset($sco->parameters) && (!empty($sco->parameters))) {
         $launcher = $sco->launch.$connector.$sco->parameters;
@@ -136,8 +141,13 @@ if (scorm_external_link($sco->launch)) {
     $result = "$CFG->wwwroot/pluginfile.php/$context->id/mod_scorm/content/$scorm->revision/$launcher";
 }
 
+add_to_log($course->id, 'scorm', 'launch', 'view.php?id='.$cm->id, $result, $cm->id);
+
 // which API are we looking for
 $LMS_api = (scorm_version_check($scorm->version, SCORM_12) || empty($scorm->version)) ? 'API' : 'API_1484_11';
+
+header('Content-Type: text/html; charset=UTF-8');
+
 ?>
 <html>
     <head>
@@ -206,9 +216,5 @@ $LMS_api = (scorm_version_check($scorm->version, SCORM_12) || empty($scorm->vers
     </head>
     <body onload="doredirect();">
         <p><?php echo get_string('activitypleasewait', 'scorm');?></p>
-        <?php if (debugging('', DEBUG_DEVELOPER)) {
-                  add_to_log($course->id, 'scorm', 'launch', 'view.php?id='.$cm->id, $result, $cm->id);
-              }
-        ?>
     </body>
 </html>

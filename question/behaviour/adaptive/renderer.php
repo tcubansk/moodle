@@ -36,22 +36,25 @@ defined('MOODLE_INTERNAL') || die();
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class qbehaviour_adaptive_renderer extends qbehaviour_renderer {
-    protected function get_graded_step(question_attempt $qa) {
-        foreach ($qa->get_reverse_step_iterator() as $step) {
-            if ($step->has_behaviour_var('_try')) {
-                return $step;
-            }
-        }
-    }
 
     public function controls(question_attempt $qa, question_display_options $options) {
         return $this->submit_button($qa, $options);
     }
 
     public function feedback(question_attempt $qa, question_display_options $options) {
+        if ($qa->get_state() == question_state::$invalid) {
+            // If the latest answer was invalid, display an informative message
+            $output = '';
+            $info = $this->disregarded_info();
+            if ($info) {
+                $output = html_writer::tag('div', $info, array('class' => 'gradingdetails'));
+            }
+            return $output;
+        }
+
         // Try to find the last graded step.
 
-        $gradedstep = $this->get_graded_step($qa);
+        $gradedstep = $qa->get_behaviour()->get_graded_step($qa);
         if (is_null($gradedstep) || $qa->get_max_mark() == 0 ||
                 $options->marks < question_display_options::MARK_AND_MAX) {
             return '';
@@ -95,23 +98,40 @@ class qbehaviour_adaptive_renderer extends qbehaviour_renderer {
      */
     protected function penalty_info(question_attempt $qa, $mark,
             question_display_options $options) {
-        if (!$qa->get_question()->penalty) {
+
+        $currentpenalty = $qa->get_question()->penalty * $qa->get_max_mark();
+        $totalpenalty = $currentpenalty * $qa->get_last_behaviour_var('_try', 0);
+
+        if ($currentpenalty == 0) {
             return '';
         }
         $output = '';
 
-        // print details of grade adjustment due to penalties
+        // Print details of grade adjustment due to penalties
         if ($mark->raw != $mark->cur) {
             $output .= ' ' . get_string('gradingdetailsadjustment', 'qbehaviour_adaptive', $mark);
         }
 
-        // print info about new penalty
-        // penalty is relevant only if the answer is not correct and further attempts are possible
-        if (!$qa->get_state()->is_finished()) {
+        // Print information about any new penalty, only relevant if the answer can be improved.
+        if ($qa->get_behaviour()->is_state_improvable($qa->get_state())) {
             $output .= ' ' . get_string('gradingdetailspenalty', 'qbehaviour_adaptive',
-                    format_float($qa->get_question()->penalty, $options->markdp));
+                    format_float($currentpenalty, $options->markdp));
+
+            // Print information about total penalties so far, if larger than current penalty.
+            if ($totalpenalty > $currentpenalty) {
+                $output .= ' ' . get_string('gradingdetailspenaltytotal', 'qbehaviour_adaptive',
+                        format_float($totalpenalty, $options->markdp));
+            }
         }
 
         return $output;
     }
+
+    /**
+     * Display information about a disregarded (incomplete) response.
+     */
+    protected function disregarded_info() {
+        return get_string('disregardedwithoutpenalty', 'qbehaviour_adaptive');
+    }
+
 }

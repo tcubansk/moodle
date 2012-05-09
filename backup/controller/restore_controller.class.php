@@ -166,17 +166,22 @@ class restore_controller extends backup implements loggable {
     }
 
     public function set_status($status) {
-        $this->log('setting controller status to', backup::LOG_DEBUG, $status);
-        // TODO: Check it's a correct status
-        $this->status = $status;
-        // Ensure that, once set to backup::STATUS_AWAITING | STATUS_NEED_PRECHECK, controller is stored in DB
-        // Note: never save_controller() after STATUS_EXECUTING or the whole controller,
+        // Note: never save_controller() with the object info after STATUS_EXECUTING or the whole controller,
         // containing all the steps will be sent to DB. 100% (monster) useless.
+        $this->log('setting controller status to', backup::LOG_DEBUG, $status);
+        // TODO: Check it's a correct status.
+        $this->status = $status;
+        // Ensure that, once set to backup::STATUS_AWAITING | STATUS_NEED_PRECHECK, controller is stored in DB.
         if ($status == backup::STATUS_AWAITING || $status == backup::STATUS_NEED_PRECHECK) {
             $this->save_controller();
             $tbc = self::load_controller($this->restoreid);
             $this->logger = $tbc->logger; // wakeup loggers
             $tbc->destroy(); // Clean temp controller structures
+
+        } else if ($status == backup::STATUS_FINISHED_OK) {
+            // If the operation has ended without error (backup::STATUS_FINISHED_OK)
+            // proceed by cleaning the object from database. MDL-29262.
+            $this->save_controller(false, true);
         }
     }
 
@@ -299,6 +304,14 @@ class restore_controller extends backup implements loggable {
         // Basic/initial prevention against time/memory limits
         set_time_limit(1 * 60 * 60); // 1 hour for 1 course initially granted
         raise_memory_limit(MEMORY_EXTRA);
+        // If this is not a course restore, inform the plan we are not
+        // including all the activities for sure. This will affect any
+        // task/step executed conditionally to stop processing information
+        // for section and activity restore. MDL-28180.
+        if ($this->get_type() !== backup::TYPE_1COURSE) {
+            $this->log('notifying plan about excluded activities by type', backup::LOG_DEBUG);
+            $this->plan->set_excluding_activities();
+        }
         return $this->plan->execute();
     }
 
@@ -355,12 +368,20 @@ class restore_controller extends backup implements loggable {
         backup_helper::log($message, $level, $a, $depth, $display, $this->logger);
     }
 
-    public function save_controller() {
+    /**
+     * Save controller information
+     *
+     * @param bool $includeobj to decide if the object itself must be updated (true) or no (false)
+     * @param bool $cleanobj to decide if the object itself must be cleaned (true) or no (false)
+     */
+    public function save_controller($includeobj = true, $cleanobj = false) {
         // Going to save controller to persistent storage, calculate checksum for later checks and save it
         // TODO: flag the controller as NA. Any operation on it should be forbidden util loaded back
         $this->log('saving controller to db', backup::LOG_DEBUG);
-        $this->checksum = $this->calculate_checksum();
-        restore_controller_dbops::save_controller($this, $this->checksum);
+        if ($includeobj ) {  // Only calculate checksum if we are going to include the object.
+            $this->checksum = $this->calculate_checksum();
+        }
+        restore_controller_dbops::save_controller($this, $this->checksum, $includeobj, $cleanobj);
     }
 
     public static function load_controller($restoreid) {

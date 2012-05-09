@@ -29,7 +29,7 @@ require_once $CFG->dirroot.'/lib/evalmath/evalmath.class.php';
 
 /**
  * This class abstracts evaluation of spreadsheet formulas.
- * See unit tests in lib/simpletest/testmathslib.php for sample usage.
+ * See unit tests in lib/tests/mathslib_test.php for sample usage.
  *
  * @package moodlecore
  * @copyright Petr Skoda (skodak)
@@ -50,7 +50,7 @@ class calc_formula {
      */
     function calc_formula($formula, $params=false) {
         $this->_em = new EvalMath();
-        $this->_em->suppress_errors = !debugging('', DEBUG_DEVELOPER);
+        $this->_em->suppress_errors = true; // no PHP errors!
         if (strpos($formula, '=') !== 0) {
             $this->_error = "missing leading '='";
             return;

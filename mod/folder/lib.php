@@ -217,9 +217,12 @@ function folder_get_participants($folderid) {
 
 /**
  * Lists all browsable file areas
- * @param object $course
- * @param object $cm
- * @param object $context
+ *
+ * @package  mod_folder
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
  * @return array
  */
 function folder_get_file_areas($course, $cm, $context) {
@@ -231,16 +234,19 @@ function folder_get_file_areas($course, $cm, $context) {
 
 /**
  * File browsing support for folder module content area.
- * @param object $browser
- * @param object $areas
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param int $itemid
- * @param string $filepath
- * @param string $filename
- * @return object file_info instance or null if not found
+ *
+ * @package  mod_folder
+ * @category files
+ * @param file_browser $browser file browser instance
+ * @param array $areas file areas
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param int $itemid item ID
+ * @param string $filepath file path
+ * @param string $filename file name
+ * @return file_info instance or null if not found
  */
 function folder_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {
     global $CFG;
@@ -279,15 +285,18 @@ function folder_get_file_info($browser, $areas, $course, $cm, $context, $fileare
 /**
  * Serves the folder files.
  *
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ * @package  mod_folder
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - just send the file
  */
-function folder_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function folder_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG, $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -315,27 +324,7 @@ function folder_pluginfile($course, $cm, $context, $filearea, $args, $forcedownl
 
     // finally send the file
     // for folder module, we force download file all the time
-    send_stored_file($file, 86400, 0, true);
-}
-
-/**
- * This function extends the global navigation for the site.
- * It is important to note that you should not rely on PAGE objects within this
- * body of code as there is no guarantee that during an AJAX request they are
- * available
- *
- * @param navigation_node $navigation The folder node within the global navigation
- * @param stdClass $course The course object returned from the DB
- * @param stdClass $module The module object returned from the DB
- * @param stdClass $cm The course module instance returned from the DB
- */
-function folder_extend_navigation($navigation, $course, $module, $cm) {
-    /**
-     * This is currently just a stub so that it can be easily expanded upon.
-     * When expanding just remove this comment and the line below and then add
-     * you content.
-     */
-    $navigation->nodetype = navigation_node::NODETYPE_LEAF;
+    send_stored_file($file, 86400, 0, true, $options);
 }
 
 /**
@@ -347,4 +336,37 @@ function folder_extend_navigation($navigation, $course, $module, $cm) {
 function folder_page_type_list($pagetype, $parentcontext, $currentcontext) {
     $module_pagetype = array('mod-folder-*'=>get_string('page-mod-folder-x', 'folder'));
     return $module_pagetype;
+}
+
+/**
+ * Export folder resource contents
+ *
+ * @return array of file content
+ */
+function folder_export_contents($cm, $baseurl) {
+    global $CFG, $DB;
+    $contents = array();
+    $context = get_context_instance(CONTEXT_MODULE, $cm->id);
+    $folder = $DB->get_record('folder', array('id'=>$cm->instance), '*', MUST_EXIST);
+
+    $fs = get_file_storage();
+    $files = $fs->get_area_files($context->id, 'mod_folder', 'content', 0, 'sortorder DESC, id ASC', false);
+
+    foreach ($files as $fileinfo) {
+        $file = array();
+        $file['type'] = 'file';
+        $file['filename']     = $fileinfo->get_filename();
+        $file['filepath']     = $fileinfo->get_filepath();
+        $file['filesize']     = $fileinfo->get_filesize();
+        $file['fileurl']      = file_encode_url("$CFG->wwwroot/" . $baseurl, '/'.$context->id.'/mod_folder/content/'.$folder->revision.$fileinfo->get_filepath().$fileinfo->get_filename(), true);
+        $file['timecreated']  = $fileinfo->get_timecreated();
+        $file['timemodified'] = $fileinfo->get_timemodified();
+        $file['sortorder']    = $fileinfo->get_sortorder();
+        $file['userid']       = $fileinfo->get_userid();
+        $file['author']       = $fileinfo->get_author();
+        $file['license']      = $fileinfo->get_license();
+        $contents[] = $file;
+    }
+
+    return $contents;
 }

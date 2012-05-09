@@ -201,6 +201,7 @@ function lesson_unseen_branch_jump($lesson, $userid) {
     // this function searches through the lesson pages to find all the branch tables
     // that follow the flagged branch table
     $pageid = $lessonpages[$start]->nextpageid; // move down from the flagged branch table
+    $branchtables = array();
     while ($pageid != 0) {  // grab all of the branch table till eol
         if ($lessonpages[$pageid]->qtype == LESSON_PAGE_BRANCHTABLE) {
             $branchtables[] = $lessonpages[$pageid]->id;
@@ -723,7 +724,7 @@ abstract class lesson_add_page_form_base extends moodleform {
 
         if ($this->standard === true) {
             $mform->addElement('hidden', 'qtype');
-            $mform->setType('qtype', PARAM_PLUGIN);
+            $mform->setType('qtype', PARAM_INT);
 
             $mform->addElement('text', 'title', get_string('pagetitle', 'lesson'), array('size'=>70));
             $mform->setType('title', PARAM_TEXT);
@@ -830,7 +831,7 @@ abstract class lesson_add_page_form_base extends moodleform {
      *
      * @return bool
      */
-    public function construction_override() {
+    public function construction_override($pageid, lesson $lesson) {
         return true;
     }
 }
@@ -1620,14 +1621,16 @@ abstract class lesson_base {
         return !empty($this->properties->{$key});
     }
 
+    //NOTE: E_STRICT does not allow to change function signature!
+
     /**
-     * If overridden should create a new instance, save it in the DB and return it
+     * If implemented should create a new instance, save it in the DB and return it
      */
-    public static function create() {}
+    //public static function create() {}
     /**
-     * If overridden should load an instance from the DB and return it
+     * If implemented should load an instance from the DB and return it
      */
-    public static function load() {}
+    //public static function load() {}
     /**
      * Fetches all of the properties of the object
      * @return stdClass

@@ -15,79 +15,55 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * This file defines the quiz responses report class.
+ * This file defines the quiz responses table.
  *
- * @package    quiz
- * @subpackage responses
- * @copyright  2008 Jean-Michel Vedrine
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @package   quiz_responses
+ * @copyright 2008 Jean-Michel Vedrine
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
 
 defined('MOODLE_INTERNAL') || die();
 
+require_once($CFG->dirroot . '/mod/quiz/report/attemptsreport_table.php');
+
 
 /**
  * This is a table subclass for displaying the quiz responses report.
  *
- * @copyright  2008 Jean-Michel Vedrine
- * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @copyright 2008 Jean-Michel Vedrine
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-class quiz_report_responses_table extends quiz_attempt_report_table {
+class quiz_responses_table extends quiz_attempts_report_table {
 
-    public function __construct($quiz, $context, $qmsubselect, $groupstudents,
-            $students, $questions, $candelete, $reporturl, $displayoptions) {
+    /**
+     * Constructor
+     * @param object $quiz
+     * @param context $context
+     * @param string $qmsubselect
+     * @param quiz_responses_options $options
+     * @param array $groupstudents
+     * @param array $students
+     * @param array $questions
+     * @param moodle_url $reporturl
+     */
+    public function __construct($quiz, $context, $qmsubselect, quiz_responses_options $options,
+            $groupstudents, $students, $questions, $reporturl) {
         parent::__construct('mod-quiz-report-responses-report', $quiz, $context,
-                $qmsubselect, $groupstudents, $students, $questions, $candelete,
-                $reporturl, $displayoptions);
+                $qmsubselect, $options, $groupstudents, $students, $questions, $reporturl);
     }
 
     public function build_table() {
-        if ($this->rawdata) {
-            $this->strtimeformat = str_replace(',', ' ', get_string('strftimedatetime'));
-            parent::build_table();
-        }
-    }
-
-    public function wrap_html_start() {
-        global $PAGE;
-        if ($this->is_downloading() || !$this->candelete) {
+        if (!$this->rawdata) {
             return;
         }
 
-        // Start form
-        $url = new moodle_url($this->reporturl, $this->displayoptions);
-        $url->param('sesskey', sesskey());
-
-        echo '<div id="tablecontainer">';
-        echo '<form id="attemptsform" method="post" action="' . $url->out_omit_querystring() . '>';
-        echo html_writer::input_hidden_params($url);
-        echo '<div>';
-        $PAGE->requires->event_handler('#attemptsform', 'submit', 'M.util.show_confirm_dialog',
-                array('message' => get_string('deleteattemptcheck', 'quiz')));
-    }
-
-    public function wrap_html_finish() {
-        if ($this->is_downloading() || !$this->candelete) {
-            return;
-        }
-
-        // TODO add back are you sure, and convert to html_writer.
-        echo '<div id="commands">';
-        echo '<a href="javascript:select_all_in(\'DIV\', null, \'tablecontainer\');">'.
-                get_string('selectall', 'quiz').'</a> / ';
-        echo '<a href="javascript:deselect_all_in(\'DIV\', null, \'tablecontainer\');">'.
-                get_string('selectnone', 'quiz').'</a> ';
-        echo '&nbsp;&nbsp;';
-        echo '<input type="submit" value="'.get_string('deleteselected', 'quiz_overview').'"/>';
-        echo '</div>';
-        // Close form
-        echo '</div>';
-        echo '</form></div>';
+        $this->strtimeformat = str_replace(',', ' ', get_string('strftimedatetime'));
+        parent::build_table();
     }
 
     public function col_sumgrades($attempt) {
-        if (!$attempt->timefinish) {
+        if ($attempt->state == quiz_attempt::FINISHED) {
             return '-';
         }
 

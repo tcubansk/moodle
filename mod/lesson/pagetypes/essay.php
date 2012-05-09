@@ -97,8 +97,10 @@ class lesson_page_type_essay extends lesson_page {
 
         if (is_array($data->answer)) {
             $studentanswer = $data->answer['text'];
+            $studentanswerformat = $data->answer['format'];
         } else {
             $studentanswer = $data->answer;
+            $studentanswerformat = FORMAT_MOODLE;
         }
 
         if (trim($studentanswer) === '') {
@@ -117,13 +119,14 @@ class lesson_page_type_essay extends lesson_page {
         $userresponse->graded = 0;
         $userresponse->score = 0;
         $userresponse->answer = $studentanswer;
+        $userresponse->answerformat = $studentanswerformat;
         $userresponse->response = "";
         $result->userresponse = serialize($userresponse);
-
+        $result->studentanswerformat = $studentanswerformat;
         $result->studentanswer = s($studentanswer);
         return $result;
     }
-    public function update($properties) {
+    public function update($properties, $context = null, $maxbytes = null) {
         global $DB, $PAGE;
         $answers  = $this->get_answers();
         $properties->id = $this->properties->id;
@@ -166,6 +169,7 @@ class lesson_page_type_essay extends lesson_page {
                 $essaystats->total++;
                 $pagestats[$temp->pageid] = $essaystats;
             } else {
+                $essaystats = new stdClass();
                 $essaystats->totalscore = $essayinfo->score;
                 $essaystats->total = 1;
                 $pagestats[$temp->pageid] = $essaystats;
@@ -177,6 +181,8 @@ class lesson_page_type_essay extends lesson_page {
         $answers = $this->get_answers();
         $formattextdefoptions = new stdClass;
         $formattextdefoptions->para = false;  //I'll use it widely in this page
+        $formattextdefoptions->context = $answerpage->context;
+
         foreach ($answers as $answer) {
             if ($useranswer != NULL) {
                 $essayinfo = unserialize($useranswer->useranswer);
@@ -205,6 +211,7 @@ class lesson_page_type_essay extends lesson_page {
                     $answerdata->score = get_string("havenotgradedyet", "lesson");
                 }
             } else {
+                $essayinfo = new stdClass();
                 $essayinfo->answer = get_string("didnotanswerquestion", "lesson");
             }
 
@@ -216,7 +223,7 @@ class lesson_page_type_essay extends lesson_page {
                 // dont think this should ever be reached....
                 $avescore = get_string("nooneansweredthisquestion", "lesson");
             }
-            $answerdata->answers[] = array(s($essayinfo->answer), $avescore);
+            $answerdata->answers[] = array(format_text($essayinfo->answer, $essayinfo->answerformat, $formattextdefoptions), $avescore);
             $answerpage->answerdata = $answerdata;
         }
         return $answerpage;

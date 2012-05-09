@@ -195,7 +195,7 @@ abstract class backup_cron_automated_helper {
             //Reference
             if ($haserrors) {
                 $message .= "  ".get_string('backupfailed')."\n\n";
-                $dest_url = "$CFG->wwwroot/$CFG->admin/report/backups/index.php";
+                $dest_url = "$CFG->wwwroot/report/backups/index.php";
                 $message .= "  ".get_string('backuptakealook','',$dest_url)."\n\n";
                 //Set message priority
                 $admin->priority = 1;
@@ -323,7 +323,6 @@ abstract class backup_cron_automated_helper {
             $settings = array(
                 'users' => 'backup_auto_users',
                 'role_assignments' => 'backup_auto_role_assignments',
-                'user_files' => 'backup_auto_user_files',
                 'activities' => 'backup_auto_activities',
                 'blocks' => 'backup_auto_blocks',
                 'filters' => 'backup_auto_filters',
@@ -357,7 +356,7 @@ abstract class backup_cron_automated_helper {
                 $dir = null;
             }
             if (!empty($dir) && $storage !== 0) {
-                $filename = backup_plan_dbops::get_default_backup_filename($format, $type, $course->id, $users, $anonymised, true);
+                $filename = backup_plan_dbops::get_default_backup_filename($format, $type, $course->id, $users, $anonymised, !$config->backup_shortname);
                 $outcome = $file->copy_content_to($dir.'/'.$filename);
                 if ($outcome && $storage === 1) {
                     $file->delete();
@@ -460,7 +459,7 @@ abstract class backup_cron_automated_helper {
         $storage =  $config->backup_auto_storage;
         $dir =      $config->backup_auto_destination;
 
-        $backupword = str_replace(' ', '_', moodle_strtolower(get_string('backupfilename')));
+        $backupword = str_replace(' ', '_', textlib::strtolower(get_string('backupfilename')));
         $backupword = trim(clean_filename($backupword), '_');
 
         if (!file_exists($dir) || !is_dir($dir) || !is_writable($dir)) {

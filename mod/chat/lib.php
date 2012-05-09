@@ -112,7 +112,7 @@ function chat_add_instance($chat) {
 
     $returnid = $DB->insert_record("chat", $chat);
 
-    $event = NULL;
+    $event = new stdClass();
     $event->name        = $chat->name;
     $event->description = format_module_intro('chat', $chat, $chat->coursemodule);
     $event->courseid    = $chat->course;
@@ -267,7 +267,7 @@ function chat_print_recent_activity($course, $viewfullnames, $timestart) {
 
     $past     = array();
     $current  = array();
-    $modinfo =& get_fast_modinfo($course); // reference needed because we might load the groups
+    $modinfo = get_fast_modinfo($course); // reference needed because we might load the groups
 
     foreach ($mcms as $cmid=>$mcm) {
         if (!array_key_exists($cmid, $modinfo->cms)) {

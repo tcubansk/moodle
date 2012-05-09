@@ -196,17 +196,17 @@ $CFG->admin = 'admin';
 //
 // These variables define DEFAULT block variables for new courses
 // If this one is set it overrides all others and is the only one used.
-//      $CFG->defaultblocks_override = 'participants,activity_modules,search_forums,admin,course_list:news_items,calendar_upcoming,recent_activity';
+//      $CFG->defaultblocks_override = 'participants,activity_modules,search_forums,course_list:news_items,calendar_upcoming,recent_activity';
 //
 // These variables define the specific settings for defined course formats.
 // They override any settings defined in the formats own config file.
-//      $CFG->defaultblocks_site = 'site_main_menu,admin,course_list:course_summary,calendar_month';
-//      $CFG->defaultblocks_social = 'participants,search_forums,calendar_month,calendar_upcoming,social_activities,recent_activity,admin,course_list';
-//      $CFG->defaultblocks_topics = 'participants,activity_modules,search_forums,admin,course_list:news_items,calendar_upcoming,recent_activity';
-//      $CFG->defaultblocks_weeks = 'participants,activity_modules,search_forums,admin,course_list:news_items,calendar_upcoming,recent_activity';
+//      $CFG->defaultblocks_site = 'site_main_menu,course_list:course_summary,calendar_month';
+//      $CFG->defaultblocks_social = 'participants,search_forums,calendar_month,calendar_upcoming,social_activities,recent_activity,course_list';
+//      $CFG->defaultblocks_topics = 'participants,activity_modules,search_forums,course_list:news_items,calendar_upcoming,recent_activity';
+//      $CFG->defaultblocks_weeks = 'participants,activity_modules,search_forums,course_list:news_items,calendar_upcoming,recent_activity';
 //
 // These blocks are used when no other default setting is found.
-//      $CFG->defaultblocks = 'participants,activity_modules,search_forums,admin,course_list:news_items,calendar_upcoming,recent_activity';
+//      $CFG->defaultblocks = 'participants,activity_modules,search_forums,course_list:news_items,calendar_upcoming,recent_activity';
 //
 // You can specify a different class to be created for the $PAGE global, and to
 // compute which blocks appear on each page. However, I cannot think of any good
@@ -219,6 +219,22 @@ $CFG->admin = 'admin';
 // Seconds for files to remain in caches. Decrease this if you are worried
 // about students being served outdated versions of uploaded files.
 //     $CFG->filelifetime = 86400;
+//
+// Some web servers can offload the file serving from PHP process,
+// comment out one the following options to enable it in Moodle:
+//     $CFG->xsendfile = 'X-Sendfile';           // Apache {@see https://tn123.org/mod_xsendfile/}
+//     $CFG->xsendfile = 'X-LIGHTTPD-send-file'; // Lighttpd {@see http://redmine.lighttpd.net/projects/lighttpd/wiki/X-LIGHTTPD-send-file}
+//     $CFG->xsendfile = 'X-Accel-Redirect';     // Nginx {@see http://wiki.nginx.org/XSendfile}
+// If your X-Sendfile implementation (usually Nginx) uses directory aliases specify them
+// in the following array setting:
+//     $CFG->xsendfilealiases = array(
+//         '/dataroot/' => $CFG->dataroot,
+//         '/cachedir/' => '/var/www/moodle/cache',    // for custom $CFG->cachedir locations
+//         '/tempdir/'  => '/var/www/moodle/temp',     // for custom $CFG->tempdir locations
+//         '/filedir'   => '/var/www/moodle/filedir',  // for custom $CFG->filedir locations
+//     );
+//
+//
 //
 // This setting will prevent the 'My Courses' page being displayed when a student
 // logs in. The site front page will always show the same (logged-out) view.
@@ -353,6 +369,10 @@ $CFG->admin = 'admin';
 //     $CFG->tempdir = '/var/www/moodle/temp';
 //     $CFG->cachedir = '/var/www/moodle/cache';
 //
+// Some filesystems such as NFS may not support file locking operations.
+// Locking resolves race conditions and is strongly recommended for production servers.
+//     $CFG->preventfilelocking = false;
+//
 // If $CFG->langstringcache is enabled (which should always be in production
 // environment), Moodle keeps aggregated strings in its own internal format
 // optimised for performance. By default, this on-disk cache is created in
@@ -383,17 +403,43 @@ $CFG->admin = 'admin';
 // memory limit to something higher.
 // The value for the settings should be a valid PHP memory value. e.g. 512M, 1G
 //
-//     $CFG->extramemorylimit = 1G;
+//     $CFG->extramemorylimit = '1G';
+//
+// The CSS files the Moodle produces can be extremely large and complex, especially
+// if you are using a custom theme that builds upon several other themes.
+// In Moodle 2.3 a CSS optimiser was added as an experimental feature for advanced
+// users. The CSS optimiser organises the CSS in order to reduce the overall number
+// of rules and styles being sent to the client. It does this by collating the
+// CSS before it is cached removing excess styles and rules and stripping out any
+// extraneous content such as comments and empty rules.
+// The following settings are used to enable and control the optimisation.
+//
+// Enable the CSS optimiser. This will only optimise the CSS if themedesignermode
+// is not enabled. This can be set through the UI however it is noted here as well
+// because the other CSS optimiser settings can not be set through the UI.
+//
+//      $CFG->enablecssoptimiser = true;
+//
+// If set the CSS optimiser will add stats about the optimisation to the top of
+// the optimised CSS file. You can then inspect the CSS to see the affect the CSS
+// optimiser is having.
+//
+//      $CFG->cssoptimiserstats = true;
+//
+// If set the CSS that is optimised will still retain a minimalistic formatting
+// so that anyone wanting to can still clearly read it.
+//
+//      $CFG->cssoptimiserpretty = true;
 //
 //=========================================================================
 // 8. SETTINGS FOR DEVELOPMENT SERVERS - not intended for production use!!!
 //=========================================================================
 //
 // Force a debugging mode regardless the settings in the site administration
-// @error_reporting(1023);  // NOT FOR PRODUCTION SERVERS!
-// @ini_set('display_errors', '1'); // NOT FOR PRODUCTION SERVERS!
-// $CFG->debug = 38911;  // DEBUG_DEVELOPER // NOT FOR PRODUCTION SERVERS!
-// $CFG->debugdisplay = true;   // NOT FOR PRODUCTION SERVERS!
+// @error_reporting(E_ALL | E_STRICT); // NOT FOR PRODUCTION SERVERS!
+// @ini_set('display_errors', '1');    // NOT FOR PRODUCTION SERVERS!
+// $CFG->debug = (E_ALL | E_STRICT);   // === DEBUG_DEVELOPER - NOT FOR PRODUCTION SERVERS!
+// $CFG->debugdisplay = 1;             // NOT FOR PRODUCTION SERVERS!
 //
 // You can specify a comma separated list of user ids that that always see
 // debug messages, this overrides the debug flag in $CFG->debug and $CFG->debugdisplay
@@ -412,10 +458,6 @@ $CFG->admin = 'admin';
 //
 // Divert all outgoing emails to this address to test and debug emailing features
 // $CFG->divertallemailsto = 'root@localhost.local'; // NOT FOR PRODUCTION SERVERS!
-//
-// Specify prefix for fake unit test tables. If not specified only tests
-// that do not need fake tables will be executed.
-// $CFG->unittestprefix = 'tst_';   // NOT FOR PRODUCTION SERVERS!
 //
 // special magic evil developer only wanting to edit the xmldb files manually
 // AND don't use the XMLDBEditor nor the prev/next stuff at all (Mahara and others)
@@ -453,7 +495,13 @@ $CFG->admin = 'admin';
 // Example:
 //   $CFG->forced_plugin_settings = array('pluginname'  => array('settingname' => 'value', 'secondsetting' => 'othervalue'),
 //                                        'otherplugin' => array('mysetting' => 'myvalue', 'thesetting' => 'thevalue'));
-
+//
+//=========================================================================
+// 9. PHPUNIT SUPPORT
+//=========================================================================
+// $CFG->phpunit_prefix = 'phpu_';
+// $CFG->phpunit_dataroot = '/home/example/phpu_moodledata';
+// $CFG->phpunit_directorypermissions = 02777; // optional
 
 //=========================================================================
 // ALL DONE!  To continue installation, visit your main page with a browser

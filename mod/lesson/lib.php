@@ -171,9 +171,9 @@ function lesson_user_outline($course, $user, $mod, $lesson) {
         //if grade was last modified by the user themselves use date graded. Otherwise use date submitted
         //TODO: move this copied & pasted code somewhere in the grades API. See MDL-26704
         if ($grade->usermodified == $user->id || empty($grade->datesubmitted)) {
-            $result->time = $grade->dategraded;
+            $return->time = $grade->dategraded;
         } else {
-            $result->time = $grade->datesubmitted;
+            $return->time = $grade->datesubmitted;
         }
     }
     return $return;
@@ -393,8 +393,7 @@ function lesson_get_user_grades($lesson, $userid=0) {
 /**
  * Update grades in central gradebook
  *
- * @global stdclass
- * @global object
+ * @category grade
  * @param object $lesson
  * @param int $userid specific user only, 0 means all
  * @param bool $nullifnone
@@ -453,7 +452,7 @@ function lesson_upgrade_grades() {
 /**
  * Create grade item for given lesson
  *
- * @global stdClass
+ * @category grade
  * @uses GRADE_TYPE_VALUE
  * @uses GRADE_TYPE_NONE
  * @param object $lesson object with extra cmidnumber
@@ -513,7 +512,7 @@ function lesson_grade_item_update($lesson, $grades=NULL) {
 /**
  * Delete grade item for given lesson
  *
- * @global stdClass
+ * @category grade
  * @param object $lesson object
  * @return object lesson
  */
@@ -659,7 +658,9 @@ function lesson_process_post_save(&$lesson) {
         if ($lesson->available) {
             $event->name = $lesson->name.' ('.get_string('lessonopens', 'lesson').')';
             calendar_event::create(clone($event));
-        } else if ($lesson->deadline) {
+        }
+
+        if ($lesson->deadline) {
             $event->name      = $lesson->name.' ('.get_string('lessoncloses', 'lesson').')';
             $event->timestart = $lesson->deadline;
             $event->eventtype = 'close';
@@ -788,26 +789,6 @@ function lesson_supports($feature) {
 }
 
 /**
- * This function extends the global navigation for the site.
- * It is important to note that you should not rely on PAGE objects within this
- * body of code as there is no guarantee that during an AJAX request they are
- * available
- *
- * @param navigation_node $navigation The lesson node within the global navigation
- * @param stdClass $course The course object returned from the DB
- * @param stdClass $module The module object returned from the DB
- * @param stdClass $cm The course module instance returned from the DB
- */
-function lesson_extend_navigation($navigation, $course, $module, $cm) {
-    /**
-     * This is currently just a stub so  that it can be easily expanded upon.
-     * When expanding just remove this comment and the line below and then add
-     * you content.
-     */
-    $navigation->nodetype = navigation_node::NODETYPE_LEAF;
-}
-
-/**
  * This function extends the settings navigation block for the site.
  *
  * It is safe to rely on PAGE here as we will only ever be within the module
@@ -876,8 +857,7 @@ function lesson_get_import_export_formats($type) {
             $provided = $format_class->provide_export();
         }
         if ($provided) {
-            $formatname = get_string($fileformat, 'qformat_'.$fileformat);
-            $fileformatnames[$fileformat] = $formatname;
+            $fileformatnames[$fileformat] = get_string('pluginname', 'qformat_'.$fileformat);
         }
     }
     natcasesort($fileformatnames);
@@ -888,15 +868,18 @@ function lesson_get_import_export_formats($type) {
 /**
  * Serves the lesson attachments. Implements needed access control ;-)
  *
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ * @package mod_lesson
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - justsend the file
  */
-function lesson_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function lesson_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG, $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -935,12 +918,16 @@ function lesson_pluginfile($course, $cm, $context, $filearea, $args, $forcedownl
     }
 
     // finally send the file
-    send_stored_file($file, 0, 0, $forcedownload); // download MUST be forced - security!
+    send_stored_file($file, 0, 0, $forcedownload, $options); // download MUST be forced - security!
 }
 
 /**
  * Returns an array of file areas
- * @return array
+ *
+ * @package  mod_lesson
+ * @category files
+ * @todo MDL-31048 localize
+ * @return array a list of available file areas
  */
 function lesson_get_file_areas() {
     $areas = array();
@@ -953,16 +940,18 @@ function lesson_get_file_areas() {
 /**
  * Returns a file_info_stored object for the file being requested here
  *
- * @global <type> $CFG
- * @param file_browse $browser
- * @param array $areas
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param int $itemid
- * @param string $filepath
- * @param string $filename
+ * @package  mod_lesson
+ * @category files
+ * @global stdClass $CFG
+ * @param file_browse $browser file browser instance
+ * @param array $areas file areas
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param int $itemid item ID
+ * @param string $filepath file path
+ * @param string $filename file name
  * @return file_info_stored
  */
 function lesson_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {

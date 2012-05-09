@@ -1,7 +1,45 @@
 <?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
+/**
+ * Outputs the navigation tree.
+ *
+ * @since     2.0
+ * @package   block_navigation
+ * @copyright 2009 Sam Hemelryk
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+/**
+ * Renderer for block navigation
+ *
+ * @package   block_navigation
+ * @category  navigation
+ * @copyright 2009 Sam Hemelryk
+ * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 class block_navigation_renderer extends plugin_renderer_base {
-    
+    /**
+     * Returns the content of the navigation tree.
+     *
+     * @param global_navigation $navigation
+     * @param int $expansionlimit
+     * @param array $options
+     * @return string $content
+     */
     public function navigation_tree(global_navigation $navigation, $expansionlimit, array $options = array()) {
         $navigation->add_class('navigation_node');
         $content = $this->navigation_node(array($navigation), array('class'=>'block_tree list'), $expansionlimit, $options);
@@ -10,7 +48,16 @@ class block_navigation_renderer extends plugin_renderer_base {
         }
         return $content;
     }
-
+    /**
+     * Produces a navigation node for the navigation tree
+     *
+     * @param array $items
+     * @param array $attrs
+     * @param int $expansionlimit
+     * @param array $options
+     * @param int $depth
+     * @return string
+     */
     protected function navigation_node($items, $attrs=array(), $expansionlimit=null, array $options = array(), $depth=1) {
 
         // exit if empty, we don't want an empty ul element
@@ -30,12 +77,14 @@ class block_navigation_renderer extends plugin_renderer_base {
             $isexpandable = (empty($expansionlimit) || ($item->type > navigation_node::TYPE_ACTIVITY || $item->type < $expansionlimit) || ($item->contains_active_node() && $item->children->count() > 0));
             $isbranch = $isexpandable && ($item->children->count() > 0 || ($item->has_children() && (isloggedin() || $item->type <= navigation_node::TYPE_CATEGORY)));
 
-            $hasicon = ((!$isbranch || $item->type == navigation_node::TYPE_ACTIVITY )&& $item->icon instanceof renderable);
+            $hasicon = ((!$isbranch || $item->type == navigation_node::TYPE_ACTIVITY || $item->type == navigation_node::TYPE_RESOURCE) && $item->icon instanceof renderable);
 
             if ($hasicon) {
                 $icon = $this->output->render($item->icon);
-                $content = $icon.$content; // use CSS for spacing of icons
+            } else {
+                $icon = '';
             }
+            $content = $icon.$content; // use CSS for spacing of icons
             if ($item->helpbutton !== null) {
                 $content = trim($item->helpbutton).html_writer::tag('span', $content, array('class'=>'clearhelpbutton'));
             }
@@ -57,6 +106,7 @@ class block_navigation_renderer extends plugin_renderer_base {
             } else if ($item->action instanceof action_link) {
                 //TODO: to be replaced with something else
                 $link = $item->action;
+                $link->text = $icon.$link->text;
                 $link->attributes = array_merge($link->attributes, $attributes);
                 $content = $this->output->render($link);
                 $linkrendered = true;

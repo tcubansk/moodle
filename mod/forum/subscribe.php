@@ -78,7 +78,7 @@ if ($groupmode && !forum_is_subscribed($user->id, $forum) && !has_capability('mo
     }
 }
 
-require_login($course->id, false, $cm);
+require_login($course, false, $cm);
 
 if (is_null($mode) and !is_enrolled($context, $USER, '', true)) {   // Guests and visitors can't subscribe - only enrolled
     $PAGE->set_title($course->shortname);
@@ -127,6 +127,7 @@ if (forum_is_forcesubscribed($forum)) {
     redirect($returnto, get_string("everyoneisnowsubscribed", "forum"), 1);
 }
 
+$info = new stdClass();
 $info->name  = fullname($user);
 $info->forum = format_string($forum->name);
 

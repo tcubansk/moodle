@@ -74,7 +74,7 @@ class question_type {
      * You should not need to override this method, the default behaviour should be fine.
      */
     public function local_name() {
-        return get_string($this->name(), $this->plugin_name());
+        return get_string('pluginname', $this->plugin_name());
     }
 
     /**
@@ -87,20 +87,6 @@ class question_type {
      */
     public function menu_name() {
         return $this->local_name();
-    }
-
-    /**
-     * Returns a list of other question types that this one requires in order to
-     * work. For example, the calculated question type is a subclass of the
-     * numerical question type, which is a subclass of the shortanswer question
-     * type; and the randomsamatch question type requires the shortanswer type
-     * to be installed.
-     *
-     * @return array any other question types that this one relies on. An empty
-     * array if none.
-     */
-    public function requires_qtypes() {
-        return array();
     }
 
     /**
@@ -175,7 +161,7 @@ class question_type {
      * If you use extra_question_fields, overload this function to return question id field name
      *  in case you table use another name for this column
      */
-    protected function questionid_column_name() {
+    public function questionid_column_name() {
         return 'questionid';
     }
 
@@ -186,7 +172,7 @@ class question_type {
      *
      * @return mixed array as above, or null to tell the base class to do nothing.
      */
-    protected function extra_answer_fields() {
+    public function extra_answer_fields() {
         return null;
     }
 
@@ -259,7 +245,7 @@ class question_type {
         global $OUTPUT;
         $heading = $this->get_heading(empty($question->id));
 
-        echo $OUTPUT->heading_with_help($heading, $this->name(), $this->plugin_name());
+        echo $OUTPUT->heading_with_help($heading, 'pluginname', $this->plugin_name());
 
         $permissionstrs = array();
         if (!empty($question->id)) {
@@ -293,11 +279,11 @@ class question_type {
      */
     public function get_heading($adding = false) {
         if ($adding) {
-            $action = 'adding';
+            $string = 'pluginnameadding';
         } else {
-            $action = 'editing';
+            $string = 'pluginnameediting';
         }
-        return get_string($action . $this->name(), $this->plugin_name());
+        return get_string($string, $this->plugin_name());
     }
 
     /**
@@ -702,6 +688,16 @@ class question_type {
         $question->createdby = $questiondata->createdby;
         $question->modifiedby = $questiondata->modifiedby;
 
+        //Fill extra question fields values
+        $extraquestionfields = $this->extra_question_fields();
+        if (is_array($extraquestionfields)) {
+            //omit table name
+            array_shift($extraquestionfields);
+            foreach($extraquestionfields as $field) {
+                $question->$field = $questiondata->options->$field;
+            }
+        }
+
         $this->initialise_question_hints($question, $questiondata);
     }
 
@@ -863,22 +859,9 @@ class question_type {
     }
 
     /**
-     * Like @see{get_html_head_contributions}, but this method is for CSS and
-     * JavaScript required on the question editing page question/question.php.
-     */
-    public function get_editing_head_contributions() {
-        // By default, we link to any of the files styles.css, styles.php,
-        // script.js or script.php that exist in the plugin folder.
-        // Core question types should not use this mechanism. Their styles
-        // should be included in the standard theme.
-        $this->find_standard_scripts();
-    }
-
-    /**
-     * Utility method used by @see{get_html_head_contributions} and
-     * @see{get_editing_head_contributions}. This looks for any of the files
-     * script.js or script.php that exist in the plugin folder and ensures they
-     * get included.
+     * Utility method used by {@link qtype_renderer::head_code()}. It looks
+     * for any of the files script.js or script.php that exist in the plugin
+     * folder and ensures they get included.
      */
     public function find_standard_scripts() {
         global $PAGE;
@@ -923,7 +906,7 @@ class question_type {
      * Imports question using information from extra_question_fields function
      * If some of you fields contains id's you'll need to reimplement this
      */
-    public function import_from_xml($data, $question, $format, $extra=null) {
+    public function import_from_xml($data, $question, qformat_xml $format, $extra=null) {
         $question_type = $data['@']['type'];
         if ($question_type != $this->name()) {
             return false;
@@ -976,7 +959,7 @@ class question_type {
      * Export question using information from extra_question_fields function
      * If some of you fields contains id's you'll need to reimplement this
      */
-    public function export_to_xml($question, $format, $extra=null) {
+    public function export_to_xml($question, qformat_xml $format, $extra=null) {
         $extraquestionfields = $this->extra_question_fields();
         if (!is_array($extraquestionfields)) {
             return false;
@@ -995,20 +978,15 @@ class question_type {
             array_shift($extraanswersfields);
         }
         foreach ($question->options->answers as $answer) {
-            $percent = 100 * $answer->fraction;
-            $expout .= "    <answer fraction=\"$percent\">\n";
-            $expout .= $format->writetext($answer->answer, 3, false);
-            $expout .= "      <feedback>\n";
-            $expout .= $format->writetext($answer->feedback, 4, false);
-            $expout .= "      </feedback>\n";
+            $extra = '';
             if (is_array($extraanswersfields)) {
                 foreach ($extraanswersfields as $field) {
                     $exportedvalue = $format->xml_escape($answer->$field);
-                    $expout .= "      <{$field}>{$exportedvalue}</{$field}>\n";
+                    $extra .= "      <{$field}>{$exportedvalue}</{$field}>\n";
                 }
             }
 
-            $expout .= "    </answer>\n";
+            $expout .= $format->write_answer($answer, $extra);
         }
         return $expout;
     }
@@ -1120,6 +1098,27 @@ class question_type {
     }
 
     /**
+     * Move all the files belonging to this question's hints when the question
+     * is moved from one context to another.
+     * @param int $questionid the question being moved.
+     * @param int $oldcontextid the context it is moving from.
+     * @param int $newcontextid the context it is moving to.
+     * @param bool $answerstoo whether there is an 'answer' question area,
+     *      as well as an 'answerfeedback' one. Default false.
+     */
+    protected function move_files_in_hints($questionid, $oldcontextid, $newcontextid) {
+        global $DB;
+        $fs = get_file_storage();
+
+        $hintids = $DB->get_records_menu('question_hints',
+                array('questionid' => $questionid), 'id', 'id,1');
+        foreach ($hintids as $hintid => $notused) {
+            $fs->move_area_files_to_new_context($oldcontextid,
+                    $newcontextid, 'question', 'hint', $hintid);
+        }
+    }
+
+    /**
      * Move all the files belonging to this question's answers when the question
      * is moved from one context to another.
      * @param int $questionid the question being moved.
@@ -1170,6 +1169,22 @@ class question_type {
                 $fs->delete_area_files($contextid, 'question', 'answer', $answerid);
             }
             $fs->delete_area_files($contextid, 'question', 'answerfeedback', $answerid);
+        }
+    }
+
+    /**
+     * Delete all the files belonging to this question's hints.
+     * @param int $questionid the question being deleted.
+     * @param int $contextid the context the question is in.
+     */
+    protected function delete_files_in_hints($questionid, $contextid) {
+        global $DB;
+        $fs = get_file_storage();
+
+        $hintids = $DB->get_records_menu('question_hints',
+                array('questionid' => $questionid), 'id', 'id,1');
+        foreach ($hintids as $hintid => $notused) {
+            $fs->delete_area_files($contextid, 'question', 'hint', $hintid);
         }
     }
 

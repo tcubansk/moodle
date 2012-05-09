@@ -29,7 +29,7 @@
         print_error("coursemisconf");
     }
 
-    require_login($course->id, false, $cm);
+    require_login($course, false, $cm);
 
     $context = get_context_instance(CONTEXT_MODULE, $cm->id);
 
@@ -214,6 +214,11 @@
             }
         }
         exit;
+    }
+    // Show those who haven't answered the question.
+    if (!empty($choice->showunanswered)) {
+        $choice->option[0] = get_string('notanswered', 'choice');
+        $choice->maxanswers[0] = 0;
     }
 
     $results = prepare_choice_show_results($choice, $course, $cm, $users);

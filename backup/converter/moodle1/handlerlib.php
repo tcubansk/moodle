@@ -345,6 +345,8 @@ class moodle1_root_handler extends moodle1_xml_handler {
         // {@see backup_general_helper::backup_is_samesite()}
         if (isset($backupinfo['original_site_identifier_hash'])) {
             $this->xmlwriter->full_tag('original_site_identifier_hash', $backupinfo['original_site_identifier_hash']);
+        } else {
+            $this->xmlwriter->full_tag('original_site_identifier_hash', null);
         }
         $this->xmlwriter->full_tag('original_course_id', $originalcourseinfo['original_course_id']);
         $this->xmlwriter->full_tag('original_course_fullname', $originalcourseinfo['original_course_fullname']);
@@ -439,7 +441,6 @@ class moodle1_root_handler extends moodle1_xml_handler {
             'users'            => 0, // @todo how to detect this from moodle.xml?
             'anonymize'        => 0,
             'role_assignments' => 0,
-            'user_files'       => 0,
             'activities'       => 1,
             'blocks'           => 1,
             'filters'          => 0,
@@ -862,6 +863,7 @@ class moodle1_course_outline_handler extends moodle1_xml_handler {
         // host...
         $versionfile = $CFG->dirroot.'/mod/'.$data['modulename'].'/version.php';
         if (file_exists($versionfile)) {
+            $module = new stdClass();
             include($versionfile);
             $data['version'] = $module->version;
         } else {
@@ -1188,8 +1190,7 @@ class moodle1_question_bank_handler extends moodle1_xml_handler {
 
         // replay the upgrade step 2010080901 - updating question image
         if (!empty($data['image'])) {
-            $textlib = textlib_get_instance();
-            if ($textlib->substr($textlib->strtolower($data['image']), 0, 7) == 'http://') {
+            if (textlib::substr(textlib::strtolower($data['image']), 0, 7) == 'http://') {
                 // it is a link, appending to existing question text
                 $data['questiontext'] .= ' <img src="' . $data['image'] . '" />';
 
@@ -1779,7 +1780,7 @@ abstract class moodle1_qtype_handler extends moodle1_plugin_handler {
      * @param int $oldquestiontextformat
      * @return array
      */
-    protected function get_default_numerical_options($oldquestiontextformat) {
+    protected function get_default_numerical_options($oldquestiontextformat, $units) {
         global $CFG;
 
         // replay the upgrade step 2009100100 - new table
@@ -1798,6 +1799,11 @@ abstract class moodle1_qtype_handler extends moodle1_plugin_handler {
             $options['instructionsformat'] = FORMAT_HTML;
         } else {
             $options['instructionsformat'] = $oldquestiontextformat;
+        }
+
+        // Set a good default, depending on whether there are any units defined.
+        if (empty($units)) {
+            $options['showunits'] = 3;
         }
 
         return $options;
@@ -1847,7 +1853,7 @@ abstract class moodle1_qtype_handler extends moodle1_plugin_handler {
     /**
      * Question type handlers cannot open the xml_writer
      */
-    final protected function open_xml_writer() {
+    final protected function open_xml_writer($filename) {
         throw new moodle1_convert_exception('opening_xml_writer_forbidden');
     }
 
@@ -1966,7 +1972,7 @@ abstract class moodle1_resource_successor_handler extends moodle1_mod_handler {
      * @param array $data pre-cooked legacy resource data
      * @param array $raw raw legacy resource data
      */
-    public function process_legacy_resource(array $data, array $raw) {
+    public function process_legacy_resource(array $data, array $raw = null) {
     }
 
     /**

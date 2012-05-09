@@ -88,7 +88,9 @@ function url_get_post_actions() {
  * @return int new url instance id
  */
 function url_add_instance($data, $mform) {
-    global $DB;
+    global $CFG, $DB;
+
+    require_once($CFG->dirroot.'/mod/url/locallib.php');
 
     $parameters = array();
     for ($i=0; $i < 100; $i++) {
@@ -112,9 +114,7 @@ function url_add_instance($data, $mform) {
     }
     $data->displayoptions = serialize($displayoptions);
 
-    if (!empty($data->externalurl) && (strpos($data->externalurl, '://') === false) && (strpos($data->externalurl, '/', 0) === false)) {
-        $data->externalurl = 'http://'.$data->externalurl;
-    }
+    $data->externalurl = url_fix_submitted_url($data->externalurl);
 
     $data->timemodified = time();
     $data->id = $DB->insert_record('url', $data);
@@ -131,6 +131,8 @@ function url_add_instance($data, $mform) {
 function url_update_instance($data, $mform) {
     global $CFG, $DB;
 
+    require_once($CFG->dirroot.'/mod/url/locallib.php');
+
     $parameters = array();
     for ($i=0; $i < 100; $i++) {
         $parameter = "parameter_$i";
@@ -153,9 +155,7 @@ function url_update_instance($data, $mform) {
     }
     $data->displayoptions = serialize($displayoptions);
 
-    if (!empty($data->externalurl) && (strpos($data->externalurl, '://') === false) && (strpos($data->externalurl, '/', 0) === false)) {
-        $data->externalurl = 'http://'.$data->externalurl;
-    }
+    $data->externalurl = url_fix_submitted_url($data->externalurl);
 
     $data->timemodified = time();
     $data->id           = $data->instance;
@@ -286,9 +286,6 @@ function url_get_coursemodule_info($coursemodule) {
         $fullurl = "$CFG->wwwroot/mod/url/view.php?id=$coursemodule->id&amp;redirect=1";
         $info->onclick = "window.open('$fullurl'); return false;";
 
-    } else if ($display == RESOURCELIB_DISPLAY_OPEN) {
-        $fullurl = "$CFG->wwwroot/mod/url/view.php?id=$coursemodule->id&amp;redirect=1";
-        $info->onclick = "window.location.href ='$fullurl';return false;";
     }
 
     if ($coursemodule->showdescription) {
@@ -300,26 +297,6 @@ function url_get_coursemodule_info($coursemodule) {
 }
 
 /**
- * This function extends the global navigation for the site.
- * It is important to note that you should not rely on PAGE objects within this
- * body of code as there is no guarantee that during an AJAX request they are
- * available
- *
- * @param navigation_node $navigation The url node within the global navigation
- * @param stdClass $course The course object returned from the DB
- * @param stdClass $module The module object returned from the DB
- * @param stdClass $cm The course module instance returned from the DB
- */
-function url_extend_navigation($navigation, $course, $module, $cm) {
-    /**
-     * This is currently just a stub so that it can be easily expanded upon.
-     * When expanding just remove this comment and the line below and then add
-     * you content.
-     */
-    $navigation->nodetype = navigation_node::NODETYPE_LEAF;
-}
-
-/**
  * Return a list of page types
  * @param string $pagetype current page type
  * @param stdClass $parentcontext Block's parent context
@@ -328,4 +305,41 @@ function url_extend_navigation($navigation, $course, $module, $cm) {
 function url_page_type_list($pagetype, $parentcontext, $currentcontext) {
     $module_pagetype = array('mod-url-*'=>get_string('page-mod-url-x', 'url'));
     return $module_pagetype;
+}
+
+/**
+ * Export URL resource contents
+ *
+ * @return array of file content
+ */
+function url_export_contents($cm, $baseurl) {
+    global $CFG, $DB;
+    require_once("$CFG->dirroot/mod/url/locallib.php");
+    $contents = array();
+    $context = get_context_instance(CONTEXT_MODULE, $cm->id);
+
+    $course = $DB->get_record('course', array('id'=>$cm->course), '*', MUST_EXIST);
+    $url = $DB->get_record('url', array('id'=>$cm->instance), '*', MUST_EXIST);
+
+    $fullurl = str_replace('&amp;', '&', url_get_full_url($url, $cm, $course));
+    $isurl = clean_param($fullurl, PARAM_URL);
+    if (empty($isurl)) {
+        return null;
+    }
+
+    $url = array();
+    $url['type'] = 'url';
+    $url['filename']     = $url->name;
+    $url['filepath']     = null;
+    $url['filesize']     = 0;
+    $url['fileurl']      = $fullurl;
+    $url['timecreated']  = null;
+    $url['timemodified'] = $url->timemodified;
+    $url['sortorder']    = null;
+    $url['userid']       = null;
+    $url['author']       = null;
+    $url['license']      = null;
+    $contents[] = $url;
+
+    return $contents;
 }

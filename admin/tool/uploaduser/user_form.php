@@ -53,8 +53,7 @@ class admin_uploaduser_form1 extends moodleform {
             $mform->setDefault('delimiter_name', 'comma');
         }
 
-        $textlib = textlib_get_instance();
-        $choices = $textlib->get_encodings();
+        $choices = textlib::get_encodings();
         $mform->addElement('select', 'encoding', get_string('encoding', 'tool_uploaduser'), $choices);
         $mform->setDefault('encoding', 'UTF-8');
 
@@ -133,6 +132,11 @@ class admin_uploaduser_form2 extends moodleform {
         $mform->setDefault('uuallowdeletes', 0);
         $mform->disabledIf('uuallowdeletes', 'uutype', 'eq', UU_USER_ADDNEW);
         $mform->disabledIf('uuallowdeletes', 'uutype', 'eq', UU_USER_ADDINC);
+
+        $mform->addElement('selectyesno', 'uuallowsuspends', get_string('allowsuspends', 'tool_uploaduser'));
+        $mform->setDefault('uuallowsuspends', 1);
+        $mform->disabledIf('uuallowsuspends', 'uutype', 'eq', UU_USER_ADDNEW);
+        $mform->disabledIf('uuallowsuspends', 'uutype', 'eq', UU_USER_ADDINC);
 
         $mform->addElement('selectyesno', 'uunoemailduplicates', get_string('uunoemailduplicates', 'tool_uploaduser'));
         $mform->setDefault('uunoemailduplicates', 1);

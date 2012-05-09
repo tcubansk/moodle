@@ -73,7 +73,7 @@ class question_category_list extends moodle_list {
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class question_category_list_item extends list_item {
-    public function set_icon_html($first, $last, &$lastitem){
+    public function set_icon_html($first, $last, $lastitem){
         global $CFG;
         $category = $this->item;
         $url = new moodle_url('/question/category.php', ($this->parentlist->pageurl->params() + array('edit'=>$category->id)));
@@ -155,6 +155,7 @@ class question_category_object {
 
         $this->tab = str_repeat('&nbsp;', $this->tabsize);
 
+        $this->str = new stdClass();
         $this->str->course         = get_string('course');
         $this->str->category       = get_string('category', 'question');
         $this->str->categoryinfo   = get_string('categoryinfo', 'question');
@@ -360,7 +361,7 @@ class question_category_object {
         global $DB;
         $questionids = $DB->get_records_select_menu('question',
                 'category = ? AND (parent = 0 OR parent = id)', array($oldcat), '', 'id,1');
-        question_move_questions_to_category($questionids, $newcat);
+        question_move_questions_to_category(array_keys($questionids), $newcat);
     }
 
     /**
@@ -427,7 +428,7 @@ class question_category_object {
         }
 
         // Update the category record.
-        $cat = null;
+        $cat = new stdClass();
         $cat->id = $updateid;
         $cat->name = $newname;
         $cat->info = $newinfo;

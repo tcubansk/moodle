@@ -44,6 +44,7 @@ class assignment_upload extends assignment_base {
         global $USER, $OUTPUT;
 
         require_capability('mod/assignment:view', $this->context);
+        $cansubmit = has_capability('mod/assignment:submit', $this->context);
 
         add_to_log($this->course->id, 'assignment', 'view', "view.php?id={$this->cm->id}", $this->assignment->id, $this->cm->id);
 
@@ -67,66 +68,77 @@ class assignment_upload extends assignment_base {
             } else {
                 $filecount = 0;
             }
+            if ($cansubmit or !empty($filecount)) { //if a user has submitted files using a previous role we should still show the files
+                $this->view_feedback();
 
-            $this->view_feedback();
-
-            if (!$this->drafts_tracked() or !$this->isopen() or $this->is_finalized($submission)) {
-                echo $OUTPUT->heading(get_string('submission', 'assignment'), 3);
-            } else {
-                echo $OUTPUT->heading(get_string('submissiondraft', 'assignment'), 3);
-            }
-
-            if ($filecount and $submission) {
-                echo $OUTPUT->box($this->print_user_files($USER->id, true), 'generalbox boxaligncenter', 'userfiles');
-            } else {
-                if (!$this->isopen() or $this->is_finalized($submission)) {
-                    echo $OUTPUT->box(get_string('nofiles', 'assignment'), 'generalbox boxaligncenter nofiles', 'userfiles');
+                if (!$this->drafts_tracked() or !$this->isopen() or $this->is_finalized($submission)) {
+                    echo $OUTPUT->heading(get_string('submission', 'assignment'), 3);
                 } else {
-                    echo $OUTPUT->box(get_string('nofilesyet', 'assignment'), 'generalbox boxaligncenter nofiles', 'userfiles');
+                    echo $OUTPUT->heading(get_string('submissiondraft', 'assignment'), 3);
                 }
-            }
 
-            if (has_capability('mod/assignment:submit', $this->context)) {
+                if ($filecount and $submission) {
+                    echo $OUTPUT->box($this->print_user_files($USER->id, true), 'generalbox boxaligncenter', 'userfiles');
+                } else {
+                    if (!$this->isopen() or $this->is_finalized($submission)) {
+                        echo $OUTPUT->box(get_string('nofiles', 'assignment'), 'generalbox boxaligncenter nofiles', 'userfiles');
+                    } else {
+                        echo $OUTPUT->box(get_string('nofilesyet', 'assignment'), 'generalbox boxaligncenter nofiles', 'userfiles');
+                    }
+                }
+
                 $this->view_upload_form();
-            }
 
-            if ($this->notes_allowed()) {
-                echo $OUTPUT->heading(get_string('notes', 'assignment'), 3);
-                $this->view_notes();
-            }
+                if ($this->notes_allowed()) {
+                    echo $OUTPUT->heading(get_string('notes', 'assignment'), 3);
+                    $this->view_notes();
+                }
 
-            $this->view_final_submission();
+                $this->view_final_submission();
+            }
         }
         $this->view_footer();
     }
 
 
     function view_feedback($submission=NULL) {
-        global $USER, $CFG, $DB, $OUTPUT;
+        global $USER, $CFG, $DB, $OUTPUT, $PAGE;
         require_once($CFG->libdir.'/gradelib.php');
+        require_once("$CFG->dirroot/grade/grading/lib.php");
 
         if (!$submission) { /// Get submission for this assignment
-            $submission = $this->get_submission($USER->id);
+            $userid = $USER->id;
+            $submission = $this->get_submission($userid);
+        } else {
+            $userid = $submission->userid;
         }
 
-        if (empty($submission->timemarked)) {   /// Nothing to show, so print nothing
-            if ($this->count_responsefiles($USER->id)) {
-                echo $OUTPUT->heading(get_string('responsefiles', 'assignment'), 3);
-                $responsefiles = $this->print_responsefiles($USER->id, true);
-                echo $OUTPUT->box($responsefiles, 'generalbox boxaligncenter');
-            }
+        // Check the user can submit
+        $canviewfeedback = ($userid == $USER->id && has_capability('mod/assignment:submit', $this->context, $USER->id, false));
+        // If not then check if the user still has the view cap and has a previous submission
+        $canviewfeedback = $canviewfeedback || (!empty($submission) && $submission->userid == $USER->id && has_capability('mod/assignment:view', $this->context));
+        // Or if user can grade (is a teacher or admin)
+        $canviewfeedback = $canviewfeedback || has_capability('mod/assignment:grade', $this->context);
+
+        if (!$canviewfeedback) {
+            // can not view or submit assignments -> no feedback
             return;
         }
 
-        $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, $USER->id);
+        $grading_info = grade_get_grades($this->course->id, 'mod', 'assignment', $this->assignment->id, $userid);
         $item = $grading_info->items[0];
-        $grade = $item->grades[$USER->id];
+        $grade = $item->grades[$userid];
 
         if ($grade->hidden or $grade->grade === false) { // hidden or error
             return;
         }
 
-        if ($grade->grade === null and empty($grade->str_feedback)) {   /// Nothing to show yet
+        if ($grade->grade === null and empty($grade->str_feedback)) {   // No grade to show yet
+            if ($this->count_responsefiles($userid)) {   // but possibly response files are present
+                echo $OUTPUT->heading(get_string('responsefiles', 'assignment'), 3);
+                $responsefiles = $this->print_responsefiles($userid, true);
+                echo $OUTPUT->box($responsefiles, 'generalbox boxaligncenter');
+            }
             return;
         }
 
@@ -158,12 +170,14 @@ class assignment_upload extends assignment_base {
         echo '<tr>';
         echo '<td class="left side">&nbsp;</td>';
         echo '<td class="content">';
-        if ($this->assignment->grade) {
-            echo '<div class="grade">';
-            echo get_string("grade").': '.$grade->str_long_grade;
-            echo '</div>';
-            echo '<div class="clearer"></div>';
+        $gradestr = '<div class="grade">'. get_string("grade").': '.$grade->str_long_grade. '</div>';
+        if (!empty($submission) && $controller = get_grading_manager($this->context, 'mod_assignment', 'submission')->get_active_controller()) {
+            $controller->set_grade_range(make_grades_menu($this->assignment->grade));
+            echo $controller->render_grade($PAGE, $submission->id, $item, $gradestr, has_capability('mod/assignment:grade', $this->context));
+        } else {
+            echo $gradestr;
         }
+        echo '<div class="clearer"></div>';
 
         echo '<div class="comment">';
         echo $grade->str_feedback;
@@ -173,7 +187,7 @@ class assignment_upload extends assignment_base {
         echo '<tr>';
         echo '<td class="left side">&nbsp;</td>';
         echo '<td class="content">';
-        echo $this->print_responsefiles($USER->id, true);
+        echo $this->print_responsefiles($userid, true);
         echo '</tr>';
 
         echo '</table>';
@@ -369,7 +383,7 @@ class assignment_upload extends assignment_base {
         parent::submissions($mode);
     }
 
-    function process_feedback() {
+    function process_feedback($formdata=null) {
         if (!$feedback = data_submitted() or !confirm_sesskey()) {      // No incoming data?
             return false;
         }
@@ -377,6 +391,33 @@ class assignment_upload extends assignment_base {
         $offset = required_param('offset', PARAM_INT);
         $mform = $this->display_submission($offset, $userid, false);
         parent::process_feedback($mform);
+    }
+
+    /**
+     * Counts all complete (real) assignment submissions by enrolled students. This overrides assignment_base::count_real_submissions().
+     * This is necessary for advanced file uploads where we need to check that the data2 field is equal to "submitted" to determine
+     * if a submission is complete.
+     *
+     * @param  int $groupid (optional) If nonzero then count is restricted to this group
+     * @return int          The number of submissions
+     */
+    function count_real_submissions($groupid=0) {
+        global $DB;
+
+        // Grab the context assocated with our course module
+        $context = get_context_instance(CONTEXT_MODULE, $this->cm->id);
+
+        // Get ids of users enrolled in the given course.
+        list($enroledsql, $params) = get_enrolled_sql($context, 'mod/assignment:view', $groupid);
+        $params['assignmentid'] = $this->cm->instance;
+
+        // Get ids of users enrolled in the given course.
+        return $DB->count_records_sql("SELECT COUNT('x')
+                                         FROM {assignment_submissions} s
+                                    LEFT JOIN {assignment} a ON a.id = s.assignment
+                                   INNER JOIN ($enroledsql) u ON u.id = s.userid
+                                        WHERE s.assignment = :assignmentid AND
+                                              s.data2 = 'submitted'", $params);
     }
 
     function print_responsefiles($userid, $return=false) {
@@ -404,7 +445,6 @@ class assignment_upload extends assignment_base {
         }
         echo $output;
     }
-
 
     /**
      * Upload files
@@ -574,7 +614,7 @@ class assignment_upload extends assignment_base {
         die;
     }
 
-    function send_file($filearea, $args) {
+    function send_file($filearea, $args, $forcedownload, array $options=array()) {
         global $CFG, $DB, $USER;
         require_once($CFG->libdir.'/filelib.php');
 
@@ -598,7 +638,8 @@ class assignment_upload extends assignment_base {
             if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
                 return false;
             }
-            send_stored_file($file, 0, 0, true); // download MUST be forced - security!
+
+            send_stored_file($file, 0, 0, true, $options); // download MUST be forced - security!
 
         } else if ($filearea === 'response') {
             $submissionid = (int)array_shift($args);
@@ -618,7 +659,7 @@ class assignment_upload extends assignment_base {
             if (!$file = $fs->get_file_by_hash(sha1($fullpath)) or $file->is_directory()) {
                 return false;
             }
-            send_stored_file($file, 0, 0, true);
+            send_stored_file($file, 0, 0, true, $options);
         }
 
         return false;
@@ -730,7 +771,7 @@ class assignment_upload extends assignment_base {
             $updated->data2 = '';
             $DB->update_record('assignment_submissions', $updated);
             //TODO: add unfinalize action to log
-            add_to_log($this->course->id, 'assignment', 'view submission', 'submissions.php?id='.$this->assignment->id, $this->assignment->id, $this->cm->id);
+            add_to_log($this->course->id, 'assignment', 'view submission', 'submissions.php?id='.$this->cm->id.'&userid='.$userid.'&mode='.$mode.'&offset='.$offset, $this->assignment->id, $this->cm->id);
             $submission = $this->get_submission($userid);
             $this->update_grade($submission);
         }
@@ -802,7 +843,7 @@ class assignment_upload extends assignment_base {
         $mode     = optional_param('mode', '', PARAM_ALPHA);
         $offset   = optional_param('offset', 0, PARAM_INT);
 
-        require_login($this->course->id, false, $this->cm);
+        require_login($this->course, false, $this->cm);
 
         if (empty($mode)) {
             $urlreturn = 'view.php';
@@ -918,9 +959,14 @@ class assignment_upload extends assignment_base {
     }
 
     function can_unfinalize($submission) {
+        if(is_bool($submission)) {
+            return false;
+        }
+
         if (!$this->drafts_tracked()) {
             return false;
         }
+
         if (has_capability('mod/assignment:grade', $this->context)
           and $this->isopen()
           and $this->is_finalized($submission)) {
@@ -932,6 +978,11 @@ class assignment_upload extends assignment_base {
 
     function can_finalize($submission) {
         global $USER;
+
+        if(is_bool($submission)) {
+            return false;
+        }
+
         if (!$this->drafts_tracked()) {
             return false;
         }
@@ -1041,8 +1092,8 @@ class assignment_upload extends assignment_base {
             $editable = false;
         }
 
-        // If the user has submitted something add a bit more stuff
-        if ($submission) {
+        // If the user has submitted something add some related links and data
+        if (isset($submission->data2) AND $submission->data2 == 'submitted') {
             // Add a view link to the settings nav
             $link = new moodle_url('/mod/assignment/view.php', array('id'=>$this->cm->id));
             $node->add(get_string('viewmysubmission', 'assignment'), $link, navigation_node::TYPE_SETTING);
@@ -1124,6 +1175,18 @@ class assignment_upload extends assignment_base {
         if ($zipfile = assignment_pack_files($filesforzipping)) {
             send_temp_file($zipfile, $filename); //send file and delete after sending.
         }
+    }
+
+    /**
+     * Check the given submission is complete. Preliminary rows are often created in the assignment_submissions
+     * table before a submission actually takes place. This function checks to see if the given submission has actually
+     * been submitted.
+     *
+     * @param  stdClass $submission The submission we want to check for completion
+     * @return bool                 Indicates if the submission was found to be complete
+     */
+    public function is_submitted_with_required_data($submission) {
+        return ($submission->timemodified AND $submission->data2);
     }
 }
 

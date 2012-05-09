@@ -24,6 +24,10 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+// disable moodle specific debug messages and any errors in output,
+// comment out when debugging or better look into error log!
+define('NO_DEBUG_DISPLAY', true);
+
 // we need just the values from config.php and minlib.php
 define('ABORT_AFTER_CONFIG', true);
 require('../config.php'); // this stops immediately at the beginning of lib/setup.php
@@ -46,7 +50,11 @@ foreach ($files as $fsfile) {
         // does not exist
         continue;
     }
-    if (strpos($jsfile, $CFG->dirroot . DIRECTORY_SEPARATOR) !== 0) {
+    if ($CFG->dirroot === '/') {
+        // Some shared hosting sites serve files directly from '/',
+        // this is NOT supported, but at least allow JS when showing
+        // errors and warnings.
+    } else if (strpos($jsfile, $CFG->dirroot . DIRECTORY_SEPARATOR) !== 0) {
         // hackers - not in dirroot
         continue;
     }
@@ -85,6 +93,27 @@ function minify($files) {
         'files' => $files
     );
 
-    Minify::serve('Files', $options);
-    die();
+    try {
+        Minify::serve('Files', $options);
+        die();
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+        $error = str_replace("\r", ' ', $error);
+        $error = str_replace("\n", ' ', $error);
+    }
+
+    // minification failed - try to inform the developer and include the non-minified version
+    $js = <<<EOD
+try {console.log('Error: Minimisation of javascript failed!');} catch (e) {}
+
+// Error: $error
+// Problem detected during javascript minimisation, please review the following code
+// =================================================================================
+
+
+EOD;
+    echo $js;
+    foreach ($files as $jsfile) {
+        echo file_get_contents($jsfile)."\n";
+    }
 }

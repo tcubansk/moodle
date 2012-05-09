@@ -48,7 +48,7 @@ $currentuser = ($user->id == $USER->id);
 
 $systemcontext = get_context_instance(CONTEXT_SYSTEM);
 $coursecontext = get_context_instance(CONTEXT_COURSE, $course->id);
-$usercontext   = get_context_instance(CONTEXT_USER, $user->id, MUST_EXIST);
+$usercontext   = get_context_instance(CONTEXT_USER, $user->id, IGNORE_MISSING);
 
 // Require login first
 if (isguestuser($user)) {
@@ -57,7 +57,7 @@ if (isguestuser($user)) {
 }
 
 if (!empty($CFG->forceloginforprofiles)) {
-    require_login(); // we can not log in to course due to the parent hack bellow
+    require_login(); // we can not log in to course due to the parent hack below
 }
 
 $PAGE->set_context($coursecontext);
@@ -68,7 +68,7 @@ $PAGE->set_other_editing_capability('moodle/course:manageactivities');
 
 $isparent = false;
 
-if (!$currentuser
+if (!$currentuser and !$user->deleted
   and $DB->record_exists('role_assignments', array('userid'=>$USER->id, 'contextid'=>$usercontext->id))
   and has_capability('moodle/user:viewdetails', $usercontext)) {
     // TODO: very ugly hack - do not force "parents" to enrol into course their child is enrolled in,
@@ -109,7 +109,7 @@ if ($currentuser) {
 
     // check course level capabilities
     if (!has_capability('moodle/user:viewdetails', $coursecontext) && // normal enrolled user or mnager
-        !has_capability('moodle/user:viewdetails', $usercontext)) {   // usually parent
+        ($user->deleted or !has_capability('moodle/user:viewdetails', $usercontext))) {   // usually parent
         print_error('cannotviewprofile');
     }
 
@@ -283,7 +283,7 @@ if (!isset($hiddenfields['groups'])) {
 
 // Show other courses they may be in
 if (!isset($hiddenfields['mycourses'])) {
-    if ($mycourses = enrol_get_users_courses($user->id, true, NULL, 'visible DESC,sortorder ASC')) {
+    if ($mycourses = enrol_get_all_users_courses($user->id, true, NULL, 'visible DESC,sortorder ASC')) {
         $shown = 0;
         $courselisting = '';
         foreach ($mycourses as $mycourse) {
@@ -312,6 +312,12 @@ if (!isset($hiddenfields['mycourses'])) {
             }
         }
         print_row(get_string('courseprofiles').':', rtrim($courselisting,', '));
+    }
+}
+
+if (!isset($hiddenfields['suspended'])) {
+    if ($user->suspended) {
+        print_row('', get_string('suspended', 'auth'));
     }
 }
 

@@ -39,8 +39,11 @@ define('ENROL_USER_ACTIVE', 0);
 /** User participation in course is suspended (used in user_enrolments->status) */
 define('ENROL_USER_SUSPENDED', 1);
 
-/** Enrol info is cached for this number of seconds in require_login() */
+/** @deprecated - enrol caching was reworked, use ENROL_MAX_TIMESTAMP instead */
 define('ENROL_REQUIRE_LOGIN_CACHE_PERIOD', 1800);
+
+/** The timestamp indicating forever */
+define('ENROL_MAX_TIMESTAMP', 2147483647);
 
 /** When user disappears from external source, the enrolment is completely removed */
 define('ENROL_EXT_REMOVED_UNENROL', 0);
@@ -72,7 +75,7 @@ define('ENROL_EXT_REMOVED_SUSPENDNOROLES', 3);
 
 /**
  * Returns instances of enrol plugins
- * @param bool $enable return enabled only
+ * @param bool $enabled return enabled only
  * @return array of enrol plugins name=>instance
  */
 function enrol_get_plugins($enabled) {
@@ -188,7 +191,9 @@ function enrol_is_enabled($enrol) {
  * Check all the login enrolment information for the given user object
  * by querying the enrolment plugins
  *
- * @param object $user
+ * This function may be very slow, use only once after log-in or login-as.
+ *
+ * @param stdClass $user
  * @return void
  */
 function enrol_check_plugins($user) {
@@ -199,11 +204,8 @@ function enrol_check_plugins($user) {
         return;
     }
 
-    if (is_siteadmin()) {
-        // no sync for admin user, please use admin accounts only for admin tasks like the unix root user!
-        // if plugin fails on sync admins need to be able to log in
-        return;
-    }
+    // originally there was a broken admin test, but accidentally it was non-functional in 2.2,
+    // which proved it was actually not necessary.
 
     static $inprogress = array();  // To prevent this function being called more than once in an invocation
 
@@ -259,8 +261,8 @@ function enrol_sharing_course($user1, $user2) {
 function enrol_get_shared_courses($user1, $user2, $preloadcontexts = false, $checkexistsonly = false) {
     global $DB, $CFG;
 
-    $user1 = !empty($user1->id) ? $user1->id : $user1;
-    $user2 = !empty($user2->id) ? $user2->id : $user2;
+    $user1 = isset($user1->id) ? $user1->id : $user1;
+    $user2 = isset($user2->id) ? $user2->id : $user2;
 
     if (empty($user1) or empty($user2)) {
         return false;
@@ -471,8 +473,10 @@ function enrol_add_course_navigation(navigation_node $coursenode, $course) {
     $usersnode->trim_if_empty();
 
     if ($course->id != SITEID) {
-        // Unenrol link
-        if (is_enrolled($coursecontext)) {
+        if (isguestuser() or !isloggedin()) {
+            // guest account can not be enrolled - no links for them
+        } else if (is_enrolled($coursecontext)) {
+            // unenrol link if possible
             foreach ($instances as $instance) {
                 if (!isset($plugins[$instance->enrol])) {
                     continue;
@@ -486,6 +490,7 @@ function enrol_add_course_navigation(navigation_node $coursenode, $course) {
                 }
             }
         } else {
+            // enrol link if possible
             if (is_viewing($coursecontext)) {
                 // better not show any enrol link, this is intended for managers and inspectors
             } else {
@@ -673,6 +678,7 @@ function enrol_get_course_description_texts($course) {
 
 /**
  * Returns list of courses user is enrolled into.
+ * (Note: use enrol_get_all_users_courses if you want to use the list wihtout any cap checks )
  *
  * - $fields is an array of fieldnames to ADD
  *   so name the fields you really need, which will
@@ -687,15 +693,53 @@ function enrol_get_course_description_texts($course) {
 function enrol_get_users_courses($userid, $onlyactive = false, $fields = NULL, $sort = 'visible DESC,sortorder ASC') {
     global $DB;
 
+    $courses = enrol_get_all_users_courses($userid, $onlyactive, $fields, $sort);
+
+    // preload contexts and check visibility
+    if ($onlyactive) {
+        foreach ($courses as $id=>$course) {
+            context_instance_preload($course);
+            if (!$course->visible) {
+                if (!$context = context_course::instance($id)) {
+                    unset($courses[$id]);
+                    continue;
+                }
+                if (!has_capability('moodle/course:viewhiddencourses', $context, $userid)) {
+                    unset($courses[$id]);
+                    continue;
+                }
+            }
+        }
+    }
+
+    return $courses;
+
+}
+
+/**
+ * Returns list of courses user is enrolled into without any capability checks
+ * - $fields is an array of fieldnames to ADD
+ *   so name the fields you really need, which will
+ *   be added and uniq'd
+ *
+ * @param int $userid
+ * @param bool $onlyactive return only active enrolments in courses user may see
+ * @param string|array $fields
+ * @param string $sort
+ * @return array
+ */
+function enrol_get_all_users_courses($userid, $onlyactive = false, $fields = NULL, $sort = 'visible DESC,sortorder ASC') {
+    global $DB;
+
     // Guest account does not have any courses
     if (isguestuser($userid) or empty($userid)) {
         return(array());
     }
 
     $basefields = array('id', 'category', 'sortorder',
-                        'shortname', 'fullname', 'idnumber',
-                        'startdate', 'visible',
-                        'groupmode', 'groupmodeforce');
+            'shortname', 'fullname', 'idnumber',
+            'startdate', 'visible',
+            'groupmode', 'groupmodeforce');
 
     if (empty($fields)) {
         $fields = $basefields;
@@ -759,29 +803,10 @@ function enrol_get_users_courses($userid, $onlyactive = false, $fields = NULL, $
 
     $courses = $DB->get_records_sql($sql, $params);
 
-    // preload contexts and check visibility
-    foreach ($courses as $id=>$course) {
-        context_instance_preload($course);
-        if ($onlyactive) {
-            if (!$course->visible) {
-                if (!$context = get_context_instance(CONTEXT_COURSE, $id)) {
-                    unset($courses[$id]);
-                    continue;
-                }
-                if (!has_capability('moodle/course:viewhiddencourses', $context, $userid)) {
-                    unset($courses[$id]);
-                    continue;
-                }
-            }
-        }
-        $courses[$id] = $course;
-    }
-
-    //wow! Is that really all? :-D
-
     return $courses;
-
 }
+
+
 
 /**
  * Called when user is about to be deleted.
@@ -802,7 +827,7 @@ function enrol_user_delete($user) {
 
 /**
  * Called when course is about to be deleted.
- * @param stdClass $object
+ * @param stdClass $course
  * @return void
  */
 function enrol_course_delete($course) {
@@ -884,6 +909,88 @@ function enrol_selfenrol_available($courseid) {
 }
 
 /**
+ * This function returns the end of current active user enrolment.
+ *
+ * It deals correctly with multiple overlapping user enrolments.
+ *
+ * @param int $courseid
+ * @param int $userid
+ * @return int|bool timestamp when active enrolment ends, false means no active enrolment now, 0 means never
+ */
+function enrol_get_enrolment_end($courseid, $userid) {
+    global $DB;
+
+    $sql = "SELECT ue.*
+              FROM {user_enrolments} ue
+              JOIN {enrol} e ON (e.id = ue.enrolid AND e.courseid = :courseid)
+              JOIN {user} u ON u.id = ue.userid
+             WHERE ue.userid = :userid AND ue.status = :active AND e.status = :enabled AND u.deleted = 0";
+    $params = array('enabled'=>ENROL_INSTANCE_ENABLED, 'active'=>ENROL_USER_ACTIVE, 'userid'=>$userid, 'courseid'=>$courseid);
+
+    if (!$enrolments = $DB->get_records_sql($sql, $params)) {
+        return false;
+    }
+
+    $changes = array();
+
+    foreach ($enrolments as $ue) {
+        $start = (int)$ue->timestart;
+        $end = (int)$ue->timeend;
+        if ($end != 0 and $end < $start) {
+            debugging('Invalid enrolment start or end in user_enrolment id:'.$ue->id);
+            continue;
+        }
+        if (isset($changes[$start])) {
+            $changes[$start] = $changes[$start] + 1;
+        } else {
+            $changes[$start] = 1;
+        }
+        if ($end === 0) {
+            // no end
+        } else if (isset($changes[$end])) {
+            $changes[$end] = $changes[$end] - 1;
+        } else {
+            $changes[$end] = -1;
+        }
+    }
+
+    // let's sort then enrolment starts&ends and go through them chronologically,
+    // looking for current status and the next future end of enrolment
+    ksort($changes);
+
+    $now = time();
+    $current = 0;
+    $present = null;
+
+    foreach ($changes as $time => $change) {
+        if ($time > $now) {
+            if ($present === null) {
+                // we have just went past current time
+                $present = $current;
+                if ($present < 1) {
+                    // no enrolment active
+                    return false;
+                }
+            }
+            if ($present !== null) {
+                // we are already in the future - look for possible end
+                if ($current + $change < 1) {
+                    return $time;
+                }
+            }
+        }
+        $current += $change;
+    }
+
+    if ($current > 0) {
+        return 0;
+    } else {
+        return false;
+    }
+}
+
+
+/**
  * All enrol plugins should be based on this class,
  * this is also the main source of documentation.
  */
@@ -952,10 +1059,7 @@ abstract class enrol_plugin {
     protected function load_config() {
         if (!isset($this->config)) {
             $name = $this->get_name();
-            if (!$config = get_config("enrol_$name")) {
-                $config = new stdClass();
-            }
-            $this->config = $config;
+            $this->config = get_config("enrol_$name");
         }
     }
 
@@ -1001,22 +1105,37 @@ abstract class enrol_plugin {
      * @param stdClass $instance course enrol instance
      * All plugins allowing this must implement 'enrol/xxx:enrol' capability
      *
-     * @return bool - true means user with 'enrol/xxx:enrol' may enrol others freely, trues means nobody may add more enrolments manually
+     * @return bool - true means user with 'enrol/xxx:enrol' may enrol others freely, false means nobody may add more enrolments manually
      */
     public function allow_enrol(stdClass $instance) {
         return false;
     }
 
     /**
-     * Does this plugin allow manual unenrolments?
-     *
-     * @param stdClass $instance course enrol instance
+     * Does this plugin allow manual unenrolment of all users?
      * All plugins allowing this must implement 'enrol/xxx:unenrol' capability
      *
-     * @return bool - true means user with 'enrol/xxx:unenrol' may unenrol others freely, trues means nobody may touch user_enrolments
+     * @param stdClass $instance course enrol instance
+     * @return bool - true means user with 'enrol/xxx:unenrol' may unenrol others freely, false means nobody may touch user_enrolments
      */
     public function allow_unenrol(stdClass $instance) {
         return false;
+    }
+
+    /**
+     * Does this plugin allow manual unenrolment of a specific user?
+     * All plugins allowing this must implement 'enrol/xxx:unenrol' capability
+     *
+     * This is useful especially for synchronisation plugins that
+     * do suspend instead of full unenrolment.
+     *
+     * @param stdClass $instance course enrol instance
+     * @param stdClass $ue record from user_enrolments table, specifies user
+     *
+     * @return bool - true means user with 'enrol/xxx:unenrol' may unenrol this user, false means nobody may touch this user enrolment
+     */
+    public function allow_unenrol_user(stdClass $instance, stdClass $ue) {
+        return $this->allow_unenrol($instance);
     }
 
     /**
@@ -1049,7 +1168,6 @@ abstract class enrol_plugin {
      * This should return either a timestamp in the future or false.
      *
      * @param stdClass $instance course enrol instance
-     * @param stdClass $user record
      * @return bool|int false means not enrolled, integer means timeend
      */
     public function try_autoenrol(stdClass $instance) {
@@ -1065,7 +1183,6 @@ abstract class enrol_plugin {
      * This should return either a timestamp in the future or false.
      *
      * @param stdClass $instance course enrol instance
-     * @param stdClass $user record
      * @return bool|int false means no guest access, integer means timeend
      */
     public function try_guestaccess(stdClass $instance) {
@@ -1101,6 +1218,7 @@ abstract class enrol_plugin {
         $context = get_context_instance(CONTEXT_COURSE, $instance->courseid, MUST_EXIST);
 
         $inserted = false;
+        $updated  = false;
         if ($ue = $DB->get_record('user_enrolments', array('enrolid'=>$instance->id, 'userid'=>$userid))) {
             //only update if timestart or timeend or status are different.
             if ($ue->timestart != $timestart or $ue->timeend != $timeend or (!is_null($status) and $ue->status != $status)) {
@@ -1112,6 +1230,8 @@ abstract class enrol_plugin {
                 $ue->modifierid   = $USER->id;
                 $ue->timemodified = time();
                 $DB->update_record('user_enrolments', $ue);
+
+                $updated = true;
             }
         } else {
             $ue = new stdClass();
@@ -1128,7 +1248,21 @@ abstract class enrol_plugin {
             $inserted = true;
         }
 
+        if ($inserted) {
+            // add extra info and trigger event
+            $ue->courseid  = $courseid;
+            $ue->enrol     = $name;
+            events_trigger('user_enrolled', $ue);
+        } else if ($updated) {
+            $ue->courseid  = $courseid;
+            $ue->enrol     = $name;
+            events_trigger('user_enrol_modified', $ue);
+            // resets current enrolment caches
+            $context->mark_dirty();
+        }
+
         if ($roleid) {
+            // this must be done after the enrolment event so that the role_assigned event is triggered afterwards
             if ($this->roles_protected()) {
                 role_assign($roleid, $userid, $context->id, 'enrol_'.$name, $instance->id);
             } else {
@@ -1136,21 +1270,14 @@ abstract class enrol_plugin {
             }
         }
 
-        if ($inserted) {
-            // add extra info and trigger event
-            $ue->courseid  = $courseid;
-            $ue->enrol     = $name;
-            events_trigger('user_enrolled', $ue);
-        }
-
-        // reset primitive require_login() caching
+        // reset current user enrolment caching
         if ($userid == $USER->id) {
             if (isset($USER->enrol['enrolled'][$courseid])) {
                 unset($USER->enrol['enrolled'][$courseid]);
             }
             if (isset($USER->enrol['tempguest'][$courseid])) {
                 unset($USER->enrol['tempguest'][$courseid]);
-                $USER->access = remove_temp_roles($context, $USER->access);
+                remove_temp_course_roles($context);
             }
         }
     }
@@ -1158,8 +1285,8 @@ abstract class enrol_plugin {
     /**
      * Store user_enrolments changes and trigger event.
      *
-     * @param object $ue
-     * @param int $user id
+     * @param stdClass $instance
+     * @param int $userid
      * @param int $status
      * @param int $timestart
      * @param int $timeend
@@ -1200,11 +1327,12 @@ abstract class enrol_plugin {
 
         $ue->modifierid = $USER->id;
         $DB->update_record('user_enrolments', $ue);
+        context_course::instance($instance->courseid)->mark_dirty(); // reset enrol caches
 
         // trigger event
         $ue->courseid  = $instance->courseid;
         $ue->enrol     = $instance->name;
-        events_trigger('user_unenrol_modified', $ue);
+        events_trigger('user_enrol_modified', $ue);
     }
 
     /**
@@ -1265,14 +1393,18 @@ abstract class enrol_plugin {
             $ue->lastenrol = true; // means user not enrolled any more
             events_trigger('user_unenrolled', $ue);
         }
-        // reset primitive require_login() caching
+
+        // reset all enrol caches
+        $context->mark_dirty();
+
+        // reset current user enrolment caching
         if ($userid == $USER->id) {
             if (isset($USER->enrol['enrolled'][$courseid])) {
                 unset($USER->enrol['enrolled'][$courseid]);
             }
             if (isset($USER->enrol['tempguest'][$courseid])) {
                 unset($USER->enrol['tempguest'][$courseid]);
-                $USER->access = remove_temp_roles($context, $USER->access);
+                remove_temp_course_roles($context);
             }
         }
     }
@@ -1454,6 +1586,26 @@ abstract class enrol_plugin {
     }
 
     /**
+     * Update instance status
+     *
+     * Override when plugin needs to do some action when enabled or disabled.
+     *
+     * @param stdClass $instance
+     * @param int $newstatus ENROL_INSTANCE_ENABLED, ENROL_INSTANCE_DISABLED
+     * @return void
+     */
+    public function update_status($instance, $newstatus) {
+        global $DB;
+
+        $instance->status = $newstatus;
+        $DB->update_record('enrol', $instance);
+
+        // invalidate all enrol caches
+        $context = context_course::instance($instance->courseid);
+        $context->mark_dirty();
+    }
+
+    /**
      * Delete course enrol plugin instance, unenrol all users.
      * @param object $instance
      * @return void
@@ -1479,6 +1631,10 @@ abstract class enrol_plugin {
 
         // finally drop the enrol row
         $DB->delete_records('enrol', array('id'=>$instance->id));
+
+        // invalidate all enrol caches
+        $context = context_course::instance($instance->courseid);
+        $context->mark_dirty();
     }
 
     /**
@@ -1498,7 +1654,7 @@ abstract class enrol_plugin {
      * By defaults looks for manage links only.
      *
      * @param navigation_node $instancesnode
-     * @param object $instance
+     * @param stdClass $instance
      * @return void
      */
     public function add_course_navigation($instancesnode, stdClass $instance) {
@@ -1594,9 +1750,10 @@ abstract class enrol_plugin {
      * Returns true if the plugin has one or more bulk operations that can be performed on
      * user enrolments.
      *
+     * @param course_enrolment_manager $manager
      * @return bool
      */
-    public function has_bulk_operations() {
+    public function has_bulk_operations(course_enrolment_manager $manager) {
        return false;
     }
 
@@ -1604,9 +1761,10 @@ abstract class enrol_plugin {
      * Return an array of enrol_bulk_enrolment_operation objects that define
      * the bulk actions that can be performed on user enrolments by the plugin.
      *
+     * @param course_enrolment_manager $manager
      * @return array
      */
-    public function get_bulk_operations() {
+    public function get_bulk_operations(course_enrolment_manager $manager) {
         return array();
     }
 }

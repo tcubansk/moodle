@@ -95,7 +95,7 @@ class lesson_page_type_truefalse extends lesson_page {
         }
         $result->newpageid = $answer->jumpto;
         $result->response  = format_text($answer->response, $answer->responseformat, $formattextdefoptions);
-        $result->studentanswer = $result->userresponse = $result->response;
+        $result->studentanswer = $result->userresponse = $answer->answer;
         return $result;
     }
 
@@ -153,7 +153,7 @@ class lesson_page_type_truefalse extends lesson_page {
      * @param stdClass $properties
      * @return bool
      */
-    public function update($properties) {
+    public function update($properties, $context = null, $maxbytes = null) {
         global $DB, $PAGE;
         $answers  = $this->get_answers();
         $properties->id = $this->properties->id;

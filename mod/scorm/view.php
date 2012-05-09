@@ -20,6 +20,7 @@ require_once($CFG->dirroot.'/mod/scorm/locallib.php');
 $id = optional_param('id', '', PARAM_INT);       // Course Module ID, or
 $a = optional_param('a', '', PARAM_INT);         // scorm ID
 $organization = optional_param('organization', '', PARAM_INT); // organization ID
+$action = optional_param('action', '', PARAM_ALPHA);
 
 if (!empty($id)) {
     if (! $cm = get_coursemodule_from_id('scorm', $id)) {
@@ -55,13 +56,20 @@ if (!empty($forcejs)) {
     $PAGE->add_body_class('forcejavascript');
 }
 
-require_login($course->id, false, $cm);
+require_login($course, false, $cm);
+
+if (!empty($scorm->popup)) {
+    $PAGE->requires->data_for_js('scormplayerdata', Array('cwidth'=>$scorm->width,
+        'cheight'=>$scorm->height,
+        'popupoptions' => $scorm->options), true);
+    $PAGE->requires->js('/mod/scorm/view.js', true);
+}
 
 $context = get_context_instance(CONTEXT_COURSE, $course->id);
 $contextmodule = get_context_instance(CONTEXT_MODULE, $cm->id);
 
-if (isset($SESSION->scorm_scoid)) {
-    unset($SESSION->scorm_scoid);
+if (isset($SESSION->scorm)) {
+    unset($SESSION->scorm);
 }
 
 $strscorms = get_string("modulenameplural", "scorm");
@@ -83,6 +91,20 @@ $PAGE->set_title($pagetitle);
 $PAGE->set_heading($course->fullname);
 echo $OUTPUT->header();
 
+if (!empty($action) && confirm_sesskey() && has_capability('mod/scorm:deleteownresponses', $contextmodule)) {
+    if ($action == 'delete') {
+        $confirmurl = new moodle_url($PAGE->url, array('action'=>'deleteconfirm'));
+        echo $OUTPUT->confirm(get_string('deleteuserattemptcheck', 'scorm'), $confirmurl, $PAGE->url);
+        echo $OUTPUT->footer();
+        exit;
+    } else if ($action == 'deleteconfirm') {
+        //delete this users attempts.
+        $DB->delete_records('scorm_scoes_track', array('userid' => $USER->id, 'scormid' => $scorm->id));
+        scorm_update_grades($scorm, $USER->id, true);
+        echo $OUTPUT->notification(get_string('scormresponsedeleted', 'scorm'), 'notifysuccess');
+    }
+}
+
 $currenttab = 'info';
 require($CFG->dirroot . '/mod/scorm/tabs.php');
 
@@ -90,7 +112,7 @@ require($CFG->dirroot . '/mod/scorm/tabs.php');
 echo $OUTPUT->heading(format_string($scorm->name));
 $attemptstatus = '';
 if ($scorm->displayattemptstatus == 1) {
-    $attemptstatus = scorm_get_attempt_status($USER, $scorm);
+    $attemptstatus = scorm_get_attempt_status($USER, $scorm, $cm);
 }
 echo $OUTPUT->box(format_module_intro('scorm', $scorm, $cm->id).$attemptstatus, 'generalbox boxaligncenter boxwidthwide', 'intro');
 
@@ -110,4 +132,9 @@ if ($scormopen) {
 if (!empty($forcejs)) {
     echo $OUTPUT->box(get_string("forcejavascriptmessage", "scorm"), "generalbox boxaligncenter forcejavascriptmessage");
 }
+
+if (!empty($scorm->popup)) {
+    $PAGE->requires->js_init_call('M.mod_scormform.init');
+}
+
 echo $OUTPUT->footer();

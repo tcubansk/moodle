@@ -27,6 +27,7 @@
 require_once(dirname(__FILE__) . '/../config.php');
 require_once($CFG->dirroot . '/question/editlib.php');
 require_once($CFG->dirroot . '/question/export_form.php');
+require_once($CFG->dirroot . '/question/format.php');
 
 list($thispageurl, $contexts, $cmid, $cm, $module, $pagevars) =
         question_edit_setup('export', '/question/export.php');
@@ -43,7 +44,8 @@ $PAGE->set_title($strexportquestions);
 $PAGE->set_heading($COURSE->fullname);
 echo $OUTPUT->header();
 
-$export_form = new question_export_form($thispageurl, array('contexts'=>$contexts->having_one_edit_tab_cap('export'), 'defaultcategory'=>$pagevars['cat']));
+$export_form = new question_export_form($thispageurl,
+        array('contexts' => $contexts->having_one_edit_tab_cap('export'), 'defaultcategory' => $pagevars['cat']));
 
 
 if ($from_form = $export_form->get_data()) {

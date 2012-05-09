@@ -16,11 +16,15 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * @package moodlecore
- * @subpackage backup-moodle2
- * @copyright 2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * Defines restore_root_task class
+ * @package     core_backup
+ * @subpackage  moodle2
+ * @category    backup
+ * @copyright   2010 onwards Eloy Lafuente (stronk7) {@link http://stronk7.com}
+ * @license     http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+
+defined('MOODLE_INTERNAL') || die();
 
 /**
  * Start task that provides all the settings common to all restores and other initial steps
@@ -36,6 +40,10 @@ class restore_root_task extends restore_task {
 
         // Conditionally create the temp table (can exist from prechecks) and delete old stuff
         $this->add_step(new restore_create_and_clean_temp_stuff('create_and_clean_temp_stuff'));
+
+        // Now make sure the user that is running the restore can actually access the course
+        // before executing any other step (potentially performing permission checks)
+        $this->add_step(new restore_fix_restorer_access_step('fix_restorer_access'));
 
         // If we haven't preloaded information, load all the included inforef records to temp_ids table
         $this->add_step(new restore_load_included_inforef_records('load_inforef_records'));
@@ -117,19 +125,6 @@ class restore_root_task extends restore_task {
         $this->add_setting($roleassignments);
         $users->add_dependency($roleassignments);
 
-        // Define user_files (dependent of users)
-        $defaultvalue = false;                      // Safer default
-        $changeable = false;
-        if (isset($rootsettings['user_files']) && $rootsettings['user_files']) { // Only enabled when available
-            $defaultvalue = true;
-            $changeable = true;
-        }
-        $userfiles = new restore_user_files_setting('user_files', base_setting::IS_BOOLEAN, $defaultvalue);
-        $userfiles->set_ui(new backup_setting_ui_checkbox($userfiles, get_string('rootsettinguserfiles', 'backup')));
-        $userfiles->get_ui()->set_changeable($changeable);
-        $this->add_setting($userfiles);
-        $users->add_dependency($userfiles);
-
         // Define activitites
         $defaultvalue = false;                      // Safer default
         $changeable = false;
@@ -178,6 +173,19 @@ class restore_root_task extends restore_task {
         $comments->get_ui()->set_changeable($changeable);
         $this->add_setting($comments);
         $users->add_dependency($comments);
+
+        // Define Calendar events (dependent of users)
+        $defaultvalue = false;                      // Safer default
+        $changeable = false;
+        if (isset($rootsettings['calendarevents']) && $rootsettings['calendarevents']) { // Only enabled when available
+            $defaultvalue = true;
+            $changeable = true;
+        }
+        $events = new restore_calendarevents_setting('calendarevents', base_setting::IS_BOOLEAN, $defaultvalue);
+        $events->set_ui(new backup_setting_ui_checkbox($events, get_string('rootsettingcalendarevents', 'backup')));
+        $events->get_ui()->set_changeable($changeable);
+        $this->add_setting($events);
+        $users->add_dependency($events);
 
         // Define completion (dependent of users)
         $defaultvalue = false;                      // Safer default

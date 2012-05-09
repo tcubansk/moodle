@@ -1,5 +1,4 @@
 <?php
-
 // This file is part of Moodle - http://moodle.org/
 //
 // Moodle is free software: you can redistribute it and/or modify
@@ -16,10 +15,13 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * @package mod-forum
- * @copyright 1999 onwards Martin Dougiamas  {@link http://moodle.com}
- * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @package    mod
+ * @subpackage forum
+ * @copyright  1999 onwards Martin Dougiamas  {@link http://moodle.com}
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
+
+defined('MOODLE_INTERNAL') || die();
 
 /** Include required files */
 require_once($CFG->libdir.'/filelib.php');
@@ -50,12 +52,11 @@ define('FORUM_TRACKING_ON', 2);
  * will create a new instance and return the id number
  * of the new instance.
  *
- * @global object
- * @global object
- * @param object $forum add forum instance (with magic quotes)
+ * @param stdClass $forum add forum instance
+ * @param mod_forum_mod_form $mform
  * @return int intance id
  */
-function forum_add_instance($forum, $mform) {
+function forum_add_instance($forum, $mform = null) {
     global $CFG, $DB;
 
     $forum->timemodified = time();
@@ -151,30 +152,31 @@ function forum_update_instance($forum, $mform) {
     }
 
     if ($forum->type == 'single') {  // Update related discussion and post.
-        if (! $discussion = $DB->get_record('forum_discussions', array('forum'=>$forum->id))) {
-            if ($discussions = $DB->get_records('forum_discussions', array('forum'=>$forum->id), 'timemodified ASC')) {
-                echo $OUTPUT->notification('Warning! There is more than one discussion in this forum - using the most recent');
-                $discussion = array_pop($discussions);
-            } else {
-                // try to recover by creating initial discussion - MDL-16262
-                $discussion = new stdClass();
-                $discussion->course          = $forum->course;
-                $discussion->forum           = $forum->id;
-                $discussion->name            = $forum->name;
-                $discussion->assessed        = $forum->assessed;
-                $discussion->message         = $forum->intro;
-                $discussion->messageformat   = $forum->introformat;
-                $discussion->messagetrust    = true;
-                $discussion->mailnow         = false;
-                $discussion->groupid         = -1;
+        $discussions = $DB->get_records('forum_discussions', array('forum'=>$forum->id), 'timemodified ASC');
+        if (!empty($discussions)) {
+            if (count($discussions) > 1) {
+                echo $OUTPUT->notification(get_string('warnformorepost', 'forum'));
+            }
+            $discussion = array_pop($discussions);
+        } else {
+            // try to recover by creating initial discussion - MDL-16262
+            $discussion = new stdClass();
+            $discussion->course          = $forum->course;
+            $discussion->forum           = $forum->id;
+            $discussion->name            = $forum->name;
+            $discussion->assessed        = $forum->assessed;
+            $discussion->message         = $forum->intro;
+            $discussion->messageformat   = $forum->introformat;
+            $discussion->messagetrust    = true;
+            $discussion->mailnow         = false;
+            $discussion->groupid         = -1;
 
-                $message = '';
+            $message = '';
 
-                forum_add_discussion($discussion, null, $message);
+            forum_add_discussion($discussion, null, $message);
 
-                if (! $discussion = $DB->get_record('forum_discussions', array('forum'=>$forum->id))) {
-                    print_error('cannotadd', 'forum');
-                }
+            if (! $discussion = $DB->get_record('forum_discussions', array('forum'=>$forum->id))) {
+                print_error('cannotadd', 'forum');
             }
         }
         if (! $post = $DB->get_record('forum_posts', array('id'=>$discussion->firstpost))) {
@@ -362,6 +364,19 @@ WHERE
     return $result;
 }
 
+/**
+ * Create a message-id string to use in the custom headers of forum notification emails
+ *
+ * message-id is used by email clients to identify emails and to nest conversations
+ *
+ * @param int $postid The ID of the forum post we are notifying the user about
+ * @param int $usertoid The ID of the user being notified
+ * @param string $hostname The server's hostname
+ * @return string A unique message-id
+ */
+function forum_get_email_message_id($postid, $usertoid, $hostname) {
+    return '<'.hash('sha256',$postid.'to'.$usertoid.'@'.$hostname).'>';
+}
 
 /**
  * Function to be run periodically according to the moodle cron
@@ -520,7 +535,8 @@ function forum_cron() {
                 }
 
                 // Don't send email if the forum is Q&A and the user has not posted
-                if ($forum->type == 'qanda' && !forum_get_user_posted_time($discussion->id, $userto->id)) {
+                // Initial topics are still mailed
+                if ($forum->type == 'qanda' && !forum_get_user_posted_time($discussion->id, $userto->id) && $pid != $discussion->firstpost) {
                     mtrace('Did not email '.$userto->id.' because user has not posted in discussion');
                     continue;
                 }
@@ -600,14 +616,14 @@ function forum_cron() {
                            'Precedence: Bulk',
                            'List-Id: "'.$cleanforumname.'" <moodleforum'.$forum->id.'@'.$hostname.'>',
                            'List-Help: '.$CFG->wwwroot.'/mod/forum/view.php?f='.$forum->id,
-                           'Message-ID: <moodlepost'.$post->id.'@'.$hostname.'>',
+                           'Message-ID: '.forum_get_email_message_id($post->id, $userto->id, $hostname),
                            'X-Course-Id: '.$course->id,
                            'X-Course-Name: '.format_string($course->fullname, true)
                 );
 
                 if ($post->parent) {  // This post is a reply, so add headers for threading (see MDL-22551)
-                    $userfrom->customheaders[] = 'In-Reply-To: <moodlepost'.$post->parent.'@'.$hostname.'>';
-                    $userfrom->customheaders[] = 'References: <moodlepost'.$post->parent.'@'.$hostname.'>';
+                    $userfrom->customheaders[] = 'In-Reply-To: '.forum_get_email_message_id($post->parent, $userto->id, $hostname);
+                    $userfrom->customheaders[] = 'References: '.forum_get_email_message_id($post->parent, $userto->id, $hostname);
                 }
 
                 $shortname = format_string($course->shortname, true, array('context' => get_context_instance(CONTEXT_COURSE, $course->id)));
@@ -1356,7 +1372,7 @@ function forum_print_recent_activity($course, $viewfullnames, $timestart) {
          return false;
     }
 
-    $modinfo =& get_fast_modinfo($course);
+    $modinfo = get_fast_modinfo($course);
 
     $groupmodes = array();
     $cms    = array();
@@ -1476,8 +1492,7 @@ function forum_get_user_grades($forum, $userid = 0) {
 /**
  * Update activity grades
  *
- * @global object
- * @global object
+ * @category grade
  * @param object $forum
  * @param int $userid specific user only, 0 means all
  * @param boolean $nullifnone return null if grade does not exist
@@ -1536,12 +1551,12 @@ function forum_upgrade_grades() {
 /**
  * Create/update grade item for given forum
  *
- * @global object
+ * @category grade
  * @uses GRADE_TYPE_NONE
  * @uses GRADE_TYPE_VALUE
  * @uses GRADE_TYPE_SCALE
- * @param object $forum object with extra cmidnumber
- * @param mixed $grades optional array/object of grade(s); 'reset' means reset grades in gradebook
+ * @param stdClass $forum Forum object with extra cmidnumber
+ * @param mixed $grades Optional array/object of grade(s); 'reset' means reset grades in gradebook
  * @return int 0 if ok
  */
 function forum_grade_item_update($forum, $grades=NULL) {
@@ -1576,9 +1591,9 @@ function forum_grade_item_update($forum, $grades=NULL) {
 /**
  * Delete grade item for given forum
  *
- * @global object
- * @param object $forum object
- * @return object grade_item
+ * @category grade
+ * @param stdClass $forum Forum object
+ * @return grade_item
  */
 function forum_grade_item_delete($forum) {
     global $CFG;
@@ -1842,7 +1857,7 @@ function forum_get_readable_forums($userid, $courseid=0) {
 
     foreach ($courses as $course) {
 
-        $modinfo =& get_fast_modinfo($course);
+        $modinfo = get_fast_modinfo($course);
         if (is_null($modinfo->groups)) {
             $modinfo->groups = groups_get_user_groups($course->id, $userid);
         }
@@ -2426,7 +2441,7 @@ function forum_count_discussions($forum, $cm, $course) {
 
     require_once($CFG->dirroot.'/course/lib.php');
 
-    $modinfo =& get_fast_modinfo($course);
+    $modinfo = get_fast_modinfo($course);
     if (is_null($modinfo->groups)) {
         $modinfo->groups = groups_get_user_groups($course->id, $USER->id);
     }
@@ -2815,8 +2830,8 @@ function forum_get_user_discussions($courseid, $userid, $groupid=0) {
 function forum_get_potential_subscribers($forumcontext, $groupid, $fields, $sort) {
     global $DB;
 
-    // only active enrolled users or everybody on the frontpage with this capability
-    list($esql, $params) = get_enrolled_sql($forumcontext, 'mod/forum:initialsubscriptions', $groupid, true);
+    // only active enrolled users or everybody on the frontpage
+    list($esql, $params) = get_enrolled_sql($forumcontext, '', $groupid, true);
 
     $sql = "SELECT $fields
               FROM {user} u
@@ -2855,6 +2870,7 @@ function forum_subscribed_users($course, $forum, $groupid=0, $context = null, $f
                   u.maildigest,
                   u.imagealt,
                   u.email,
+                  u.emailstop,
                   u.city,
                   u.country,
                   u.lastaccess,
@@ -2917,6 +2933,7 @@ function forum_get_course_forum($courseid, $type) {
     }
 
     // Doesn't exist, so create one now.
+    $forum = new stdClass();
     $forum->course = $courseid;
     $forum->type = "$type";
     switch ($forum->type) {
@@ -4000,9 +4017,11 @@ function forum_print_attachments($post, $cm, $type) {
 /**
  * Lists all browsable file areas
  *
- * @param object $course
- * @param object $cm
- * @param object $context
+ * @package  mod_forum
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
  * @return array
  */
 function forum_get_file_areas($course, $cm, $context) {
@@ -4011,17 +4030,88 @@ function forum_get_file_areas($course, $cm, $context) {
 }
 
 /**
+ * File browsing support for forum module.
+ *
+ * @package  mod_forum
+ * @category files
+ * @param stdClass $browser file browser object
+ * @param stdClass $areas file areas
+ * @param stdClass $course course object
+ * @param stdClass $cm course module
+ * @param stdClass $context context module
+ * @param string $filearea file area
+ * @param int $itemid item ID
+ * @param string $filepath file path
+ * @param string $filename file name
+ * @return file_info instance or null if not found
+ */
+function forum_get_file_info($browser, $areas, $course, $cm, $context, $filearea, $itemid, $filepath, $filename) {
+    global $CFG, $DB;
+
+    if ($context->contextlevel != CONTEXT_MODULE) {
+        return null;
+    }
+
+    $fileareas = array('attachment', 'post');
+    if (!in_array($filearea, $fileareas)) {
+        return null;
+    }
+
+    if (!$post = $DB->get_record('forum_posts', array('id' => $itemid))) {
+        return null;
+    }
+
+    if (!$discussion = $DB->get_record('forum_discussions', array('id' => $post->discussion))) {
+        return null;
+    }
+
+    if (!$forum = $DB->get_record('forum', array('id' => $cm->instance))) {
+        return null;
+    }
+
+    $fs = get_file_storage();
+    $filepath = is_null($filepath) ? '/' : $filepath;
+    $filename = is_null($filename) ? '.' : $filename;
+    if (!($storedfile = $fs->get_file($context->id, 'mod_forum', $filearea, $itemid, $filepath, $filename))) {
+        return null;
+    }
+
+    // Make sure groups allow this user to see this file
+    if ($discussion->groupid > 0 and $groupmode = groups_get_activity_groupmode($cm, $course)) {   // Groups are being used
+        if (!groups_group_exists($discussion->groupid)) { // Can't find group
+            return null;                           // Be safe and don't send it to anyone
+        }
+
+        if (!groups_is_member($discussion->groupid) and !has_capability('moodle/site:accessallgroups', $context)) {
+            // do not send posts from other groups when in SEPARATEGROUPS or VISIBLEGROUPS
+            return null;
+        }
+    }
+
+    // Make sure we're allowed to see it...
+    if (!forum_user_can_see_post($forum, $discussion, $post, NULL, $cm)) {
+        return null;
+    }
+
+    $urlbase = $CFG->wwwroot.'/pluginfile.php';
+    return new file_info_stored($browser, $context, $storedfile, $urlbase, $filearea, $itemid, true, true, false);
+}
+
+/**
  * Serves the forum attachments. Implements needed access control ;-)
  *
- * @param object $course
- * @param object $cm
- * @param object $context
- * @param string $filearea
- * @param array $args
- * @param bool $forcedownload
+ * @package  mod_forum
+ * @category files
+ * @param stdClass $course course object
+ * @param stdClass $cm course module object
+ * @param stdClass $context context object
+ * @param string $filearea file area
+ * @param array $args extra arguments
+ * @param bool $forcedownload whether or not force download
+ * @param array $options additional options affecting the file serving
  * @return bool false if file not found, does not return if found - justsend the file
  */
-function forum_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload) {
+function forum_pluginfile($course, $cm, $context, $filearea, $args, $forcedownload, array $options=array()) {
     global $CFG, $DB;
 
     if ($context->contextlevel != CONTEXT_MODULE) {
@@ -4073,9 +4163,8 @@ function forum_pluginfile($course, $cm, $context, $filearea, $args, $forcedownlo
         return false;
     }
 
-
     // finally send the file
-    send_stored_file($file, 0, 0, true); // download MUST be forced - security!
+    send_stored_file($file, 0, 0, true, $options); // download MUST be forced - security!
 }
 
 /**
@@ -4343,7 +4432,7 @@ function forum_delete_post($post, $children, $course, $cm, $forum, $skipcompleti
 
     $context = get_context_instance(CONTEXT_MODULE, $cm->id);
 
-    if ($children != 'ignore' && ($childposts = $DB->get_records('forum_posts', array('parent'=>$post->id)))) {
+    if ($children !== 'ignore' && ($childposts = $DB->get_records('forum_posts', array('parent'=>$post->id)))) {
        if ($children) {
            foreach ($childposts as $childpost) {
                forum_delete_post($childpost, true, $course, $cm, $forum, $skipcompletion);
@@ -4472,9 +4561,10 @@ function forum_get_subscribed_forums($course) {
     $sql = "SELECT f.id
               FROM {forum} f
                    LEFT JOIN {forum_subscriptions} fs ON (fs.forum = f.id AND fs.userid = ?)
-             WHERE f.forcesubscribe <> ".FORUM_DISALLOWSUBSCRIBE."
+             WHERE f.course = ?
+                   AND f.forcesubscribe <> ".FORUM_DISALLOWSUBSCRIBE."
                    AND (f.forcesubscribe = ".FORUM_FORCESUBSCRIBE." OR fs.id IS NOT NULL)";
-    if ($subscribed = $DB->get_records_sql($sql, array($USER->id))) {
+    if ($subscribed = $DB->get_records_sql($sql, array($USER->id, $course->id))) {
         foreach ($subscribed as $s) {
             $subscribed[$s->id] = $s->id;
         }
@@ -4822,11 +4912,17 @@ function forum_user_can_post_discussion($forum, $currentgroup=null, $unused=-1, 
 
     if ($forum->type == 'news') {
         $capname = 'mod/forum:addnews';
+    } else if ($forum->type == 'qanda') {
+        $capname = 'mod/forum:addquestion';
     } else {
         $capname = 'mod/forum:startdiscussion';
     }
 
     if (!has_capability($capname, $context)) {
+        return false;
+    }
+
+    if ($forum->type == 'single') {
         return false;
     }
 
@@ -5359,7 +5455,8 @@ function forum_print_latest_discussions($course, $forum, $maxdiscussions=-1, $di
 
                 $discussion->forum = $forum->id;
 
-                forum_print_post($discussion, $discussion, $forum, $cm, $course, $ownpost, 0, $link, false);
+                forum_print_post($discussion, $discussion, $forum, $cm, $course, $ownpost, 0, $link, false,
+                        '', null, true, $forumtracked);
             break;
         }
     }
@@ -5653,7 +5750,7 @@ function forum_get_recent_mod_activity(&$activities, &$index, $timestart, $cours
         $course = $DB->get_record('course', array('id' => $courseid));
     }
 
-    $modinfo =& get_fast_modinfo($course);
+    $modinfo = get_fast_modinfo($course);
 
     $cm = $modinfo->cms[$cmid];
     $params = array($timestart, $cm->instance);
@@ -5849,335 +5946,50 @@ function forum_update_subscriptions_button($courseid, $forumid) {
 /**
  * This function gets run whenever user is enrolled into course
  *
- * @param object $cp
+ * @param stdClass $cp
  * @return void
  */
 function forum_user_enrolled($cp) {
-    $context = get_context_instance(CONTEXT_COURSE, $cp->courseid);
-    forum_add_user_default_subscriptions($cp->userid, $context);
-}
+    global $DB;
 
+    // NOTE: this has to be as fast as possible - we do not want to slow down enrolments!
+    //       Originally there used to be 'mod/forum:initialsubscriptions' which was
+    //       introduced because we did not have enrolment information in earlier versions...
+
+    $sql = "SELECT f.id
+              FROM {forum} f
+         LEFT JOIN {forum_subscriptions} fs ON (fs.forum = f.id AND fs.userid = :userid)
+             WHERE f.course = :courseid AND f.forcesubscribe = :initial AND fs.id IS NULL";
+    $params = array('courseid'=>$cp->courseid, 'userid'=>$cp->userid, 'initial'=>FORUM_INITIALSUBSCRIBE);
+
+    $forums = $DB->get_records_sql($sql, $params);
+    foreach ($forums as $forum) {
+        forum_subscribe($cp->userid, $forum->id);
+    }
+}
 
 /**
  * This function gets run whenever user is unenrolled from course
  *
- * @param object $cp
+ * @param stdClass $cp
  * @return void
  */
 function forum_user_unenrolled($cp) {
-    if ($cp->lastenrol) {
-        $context = get_context_instance(CONTEXT_COURSE, $cp->courseid);
-        forum_remove_user_subscriptions($cp->userid, $context);
-        forum_remove_user_tracking($cp->userid, $context);
-    }
-}
-
-
-/**
- * Add subscriptions for new users
- *
- * @global object
- * @uses CONTEXT_SYSTEM
- * @uses CONTEXT_COURSE
- * @uses CONTEXT_COURSECAT
- * @uses FORUM_INITIALSUBSCRIBE
- * @param int $userid
- * @param object $context
- * @return bool
- */
-function forum_add_user_default_subscriptions($userid, $context) {
     global $DB;
-    if (empty($context->contextlevel)) {
-        return false;
+
+    // NOTE: this has to be as fast as possible!
+
+    if ($cp->lastenrol) {
+        $params = array('userid'=>$cp->userid, 'courseid'=>$cp->courseid);
+        $forumselect = "IN (SELECT f.id FROM {forum} f WHERE f.course = :courseid)";
+
+        $DB->delete_records_select('forum_subscriptions', "userid = :userid AND forum $forumselect", $params);
+        $DB->delete_records_select('forum_track_prefs',   "userid = :userid AND forumid $forumselect", $params);
+        $DB->delete_records_select('forum_read',          "userid = :userid AND forumid $forumselect", $params);
     }
-
-    switch ($context->contextlevel) {
-
-        case CONTEXT_SYSTEM:   // For the whole site
-             $rs = $DB->get_recordset('course',null,'','id');
-             foreach ($rs as $course) {
-                 $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                 forum_add_user_default_subscriptions($userid, $subcontext);
-             }
-             $rs->close();
-             break;
-
-        case CONTEXT_COURSECAT:   // For a whole category
-             $rs = $DB->get_recordset('course', array('category' => $context->instanceid),'','id');
-             foreach ($rs as $course) {
-                 $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                 forum_add_user_default_subscriptions($userid, $subcontext);
-             }
-             $rs->close();
-             if ($categories = $DB->get_records('course_categories', array('parent' => $context->instanceid))) {
-                 foreach ($categories as $category) {
-                     $subcontext = get_context_instance(CONTEXT_COURSECAT, $category->id);
-                     forum_add_user_default_subscriptions($userid, $subcontext);
-                 }
-             }
-             break;
-
-
-        case CONTEXT_COURSE:   // For a whole course
-             if (is_enrolled($context, $userid)) {
-                if ($course = $DB->get_record('course', array('id' => $context->instanceid))) {
-                     if ($forums = get_all_instances_in_course('forum', $course, $userid, false)) {
-                         foreach ($forums as $forum) {
-                             if ($forum->forcesubscribe != FORUM_INITIALSUBSCRIBE) {
-                                 continue;
-                             }
-                             if ($modcontext = get_context_instance(CONTEXT_MODULE, $forum->coursemodule)) {
-                                 if (has_capability('mod/forum:viewdiscussion', $modcontext, $userid)) {
-                                     forum_subscribe($userid, $forum->id);
-                                 }
-                             }
-                         }
-                     }
-                 }
-             }
-             break;
-
-        case CONTEXT_MODULE:   // Just one forum
-            if (has_capability('mod/forum:initialsubscriptions', $context, $userid)) {
-                 if ($cm = get_coursemodule_from_id('forum', $context->instanceid)) {
-                     if ($forum = $DB->get_record('forum', array('id' => $cm->instance))) {
-                         if ($forum->forcesubscribe != FORUM_INITIALSUBSCRIBE) {
-                             continue;
-                         }
-                         if (has_capability('mod/forum:viewdiscussion', $context, $userid)) {
-                             forum_subscribe($userid, $forum->id);
-                         }
-                     }
-                 }
-            }
-            break;
-    }
-
-    return true;
-}
-
-
-/**
- * Remove subscriptions for a user in a context
- *
- * @global object
- * @global object
- * @uses CONTEXT_SYSTEM
- * @uses CONTEXT_COURSECAT
- * @uses CONTEXT_COURSE
- * @uses CONTEXT_MODULE
- * @param int $userid
- * @param object $context
- * @return bool
- */
-function forum_remove_user_subscriptions($userid, $context) {
-
-    global $CFG, $DB;
-
-    if (empty($context->contextlevel)) {
-        return false;
-    }
-
-    switch ($context->contextlevel) {
-
-        case CONTEXT_SYSTEM:   // For the whole site
-            // find all courses in which this user has a forum subscription
-            if ($courses = $DB->get_records_sql("SELECT c.id
-                                                  FROM {course} c,
-                                                       {forum_subscriptions} fs,
-                                                       {forum} f
-                                                       WHERE c.id = f.course AND f.id = fs.forum AND fs.userid = ?
-                                                       GROUP BY c.id", array($userid))) {
-
-                foreach ($courses as $course) {
-                    $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                    forum_remove_user_subscriptions($userid, $subcontext);
-                }
-            }
-            break;
-
-        case CONTEXT_COURSECAT:   // For a whole category
-             if ($courses = $DB->get_records('course', array('category' => $context->instanceid), '', 'id')) {
-                 foreach ($courses as $course) {
-                     $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                     forum_remove_user_subscriptions($userid, $subcontext);
-                 }
-             }
-             if ($categories = $DB->get_records('course_categories', array('parent' => $context->instanceid), '', 'id')) {
-                 foreach ($categories as $category) {
-                     $subcontext = get_context_instance(CONTEXT_COURSECAT, $category->id);
-                     forum_remove_user_subscriptions($userid, $subcontext);
-                 }
-             }
-             break;
-
-        case CONTEXT_COURSE:   // For a whole course
-            if (!is_enrolled($context, $userid)) {
-                 if ($course = $DB->get_record('course', array('id' => $context->instanceid), 'id')) {
-                    // find all forums in which this user has a subscription, and its coursemodule id
-                    if ($forums = $DB->get_records_sql("SELECT f.id, cm.id as coursemodule
-                                                         FROM {forum} f,
-                                                              {modules} m,
-                                                              {course_modules} cm,
-                                                              {forum_subscriptions} fs
-                                                        WHERE fs.userid = ? AND f.course = ?
-                                                              AND fs.forum = f.id AND cm.instance = f.id
-                                                              AND cm.module = m.id AND m.name = 'forum'", array($userid, $context->instanceid))) {
-
-                         foreach ($forums as $forum) {
-                             if ($modcontext = get_context_instance(CONTEXT_MODULE, $forum->coursemodule)) {
-                                 if (!has_capability('mod/forum:viewdiscussion', $modcontext, $userid)) {
-                                     forum_unsubscribe($userid, $forum->id);
-                                 }
-                             }
-                         }
-                     }
-                 }
-            }
-            break;
-
-        case CONTEXT_MODULE:   // Just one forum
-            if (!is_enrolled($context, $userid)) {
-                 if ($cm = get_coursemodule_from_id('forum', $context->instanceid)) {
-                     if ($forum = $DB->get_record('forum', array('id' => $cm->instance))) {
-                         if (!has_capability('mod/forum:viewdiscussion', $context, $userid)) {
-                             forum_unsubscribe($userid, $forum->id);
-                         }
-                     }
-                 }
-            }
-            break;
-    }
-
-    return true;
 }
 
 // Functions to do with read tracking.
-
-/**
- * Remove post tracking for a user in a context
- *
- * @global object
- * @global object
- * @uses CONTEXT_SYSTEM
- * @uses CONTEXT_COURSECAT
- * @uses CONTEXT_COURSE
- * @uses CONTEXT_MODULE
- * @param int $userid
- * @param object $context
- * @return bool
- */
-function forum_remove_user_tracking($userid, $context) {
-
-    global $CFG, $DB;
-
-    if (empty($context->contextlevel)) {
-        return false;
-    }
-
-    switch ($context->contextlevel) {
-
-        case CONTEXT_SYSTEM:   // For the whole site
-            // find all courses in which this user has tracking info
-            $allcourses = array();
-            if ($courses = $DB->get_records_sql("SELECT c.id
-                                                  FROM {course} c,
-                                                       {forum_read} fr,
-                                                       {forum} f
-                                                       WHERE c.id = f.course AND f.id = fr.forumid AND fr.userid = ?
-                                                       GROUP BY c.id", array($userid))) {
-
-                $allcourses = $allcourses + $courses;
-            }
-            if ($courses = $DB->get_records_sql("SELECT c.id
-                                              FROM {course} c,
-                                                   {forum_track_prefs} ft,
-                                                   {forum} f
-                                             WHERE c.id = f.course AND f.id = ft.forumid AND ft.userid = ?", array($userid))) {
-
-                $allcourses = $allcourses + $courses;
-            }
-            foreach ($allcourses as $course) {
-                $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                forum_remove_user_tracking($userid, $subcontext);
-            }
-            break;
-
-        case CONTEXT_COURSECAT:   // For a whole category
-             if ($courses = $DB->get_records('course', array('category' => $context->instanceid), '', 'id')) {
-                 foreach ($courses as $course) {
-                     $subcontext = get_context_instance(CONTEXT_COURSE, $course->id);
-                     forum_remove_user_tracking($userid, $subcontext);
-                 }
-             }
-             if ($categories = $DB->get_records('course_categories', array('parent' => $context->instanceid), '', 'id')) {
-                 foreach ($categories as $category) {
-                     $subcontext = get_context_instance(CONTEXT_COURSECAT, $category->id);
-                     forum_remove_user_tracking($userid, $subcontext);
-                 }
-             }
-             break;
-
-        case CONTEXT_COURSE:   // For a whole course
-            if (!is_enrolled($context, $userid)) {
-                 if ($course = $DB->get_record('course', array('id' => $context->instanceid), 'id')) {
-                    // find all forums in which this user has reading tracked
-                    if ($forums = $DB->get_records_sql("SELECT DISTINCT f.id, cm.id as coursemodule
-                                                     FROM {forum} f,
-                                                          {modules} m,
-                                                          {course_modules} cm,
-                                                          {forum_read} fr
-                                                    WHERE fr.userid = ? AND f.course = ?
-                                                          AND fr.forumid = f.id AND cm.instance = f.id
-                                                          AND cm.module = m.id AND m.name = 'forum'", array($userid, $context->instanceid))) {
-
-                         foreach ($forums as $forum) {
-                             if ($modcontext = get_context_instance(CONTEXT_MODULE, $forum->coursemodule)) {
-                                 if (!has_capability('mod/forum:viewdiscussion', $modcontext, $userid)) {
-                                    forum_tp_delete_read_records($userid, -1, -1, $forum->id);
-                                 }
-                             }
-                         }
-                     }
-
-                    // find all forums in which this user has a disabled tracking
-                    if ($forums = $DB->get_records_sql("SELECT f.id, cm.id as coursemodule
-                                                     FROM {forum} f,
-                                                          {modules} m,
-                                                          {course_modules} cm,
-                                                          {forum_track_prefs} ft
-                                                    WHERE ft.userid = ? AND f.course = ?
-                                                          AND ft.forumid = f.id AND cm.instance = f.id
-                                                          AND cm.module = m.id AND m.name = 'forum'", array($userid, $context->instanceid))) {
-
-                         foreach ($forums as $forum) {
-                             if ($modcontext = get_context_instance(CONTEXT_MODULE, $forum->coursemodule)) {
-                                 if (!has_capability('mod/forum:viewdiscussion', $modcontext, $userid)) {
-                                    $DB->delete_records('forum_track_prefs', array('userid' => $userid, 'forumid' => $forum->id));
-                                 }
-                             }
-                         }
-                     }
-                 }
-            }
-            break;
-
-        case CONTEXT_MODULE:   // Just one forum
-            if (!is_enrolled($context, $userid)) {
-                 if ($cm = get_coursemodule_from_id('forum', $context->instanceid)) {
-                     if ($forum = $DB->get_record('forum', array('id' => $cm->instance))) {
-                         if (!has_capability('mod/forum:viewdiscussion', $context, $userid)) {
-                            $DB->delete_records('forum_track_prefs', array('userid' => $userid, 'forumid' => $forum->id));
-                            forum_tp_delete_read_records($userid, -1, -1, $forum->id);
-                         }
-                     }
-                 }
-            }
-            break;
-    }
-
-    return true;
-}
 
 /**
  * Mark posts as read.
@@ -6226,8 +6038,9 @@ function forum_tp_mark_posts_read($user, $postids) {
 
     if ($new) {
         list($usql, $new_params) = $DB->get_in_or_equal($new);
-        $params = array($user->id, $now, $now, $user->id, $cutoffdate);
+        $params = array($user->id, $now, $now, $user->id);
         $params = array_merge($params, $new_params);
+        $params[] = $cutoffdate;
 
         $sql = "INSERT INTO {forum_read} (userid, postid, discussionid, forumid, firstread, lastread)
 
@@ -6638,7 +6451,7 @@ function forum_tp_count_forum_unread_posts($cm, $course) {
 
     require_once($CFG->dirroot.'/course/lib.php');
 
-    $modinfo =& get_fast_modinfo($course);
+    $modinfo = get_fast_modinfo($course);
     if (is_null($modinfo->groups)) {
         $modinfo->groups = groups_get_user_groups($course->id, $USER->id);
     }
@@ -7710,7 +7523,16 @@ function forum_extend_settings_navigation(settings_navigation $settingsnav, navi
         }
     }
 
-    if ($enrolled && !empty($CFG->enablerssfeeds) && !empty($CFG->forum_enablerssfeeds) && $forumobject->rsstype && $forumobject->rssarticles) {
+    if (!isloggedin() && $PAGE->course->id == SITEID) {
+        $userid = guest_user()->id;
+    } else {
+        $userid = $USER->id;
+    }
+
+    $hascourseaccess = ($PAGE->course->id == SITEID) || can_access_course($PAGE->course, $userid);
+    $enablerssfeeds = !empty($CFG->enablerssfeeds) && !empty($CFG->forum_enablerssfeeds);
+
+    if ($enablerssfeeds && $forumobject->rsstype && $forumobject->rssarticles && $hascourseaccess) {
 
         if (!function_exists('rss_get_url')) {
             require_once("$CFG->libdir/rsslib.php");
@@ -7721,11 +7543,7 @@ function forum_extend_settings_navigation(settings_navigation $settingsnav, navi
         } else {
             $string = get_string('rsssubscriberssposts','forum');
         }
-        if (!isloggedin()) {
-            $userid = 0;
-        } else {
-            $userid = $USER->id;
-        }
+
         $url = new moodle_url(rss_get_url($PAGE->cm->context->id, $userid, "mod_forum", $forumobject->id));
         $forumnode->add($string, $url, settings_navigation::TYPE_SETTING, null, null, new pix_icon('i/rss', ''));
     }
@@ -7761,6 +7579,7 @@ abstract class forum_subscriber_selector_base extends user_selector_base {
      * @param array $options
      */
     public function __construct($name, $options) {
+        $options['accesscontext'] = $options['context'];
         parent::__construct($name, $options);
         if (isset($options['context'])) {
             $this->context = $options['context'];
@@ -8098,7 +7917,7 @@ function forum_get_forums_user_posted_in($user, array $courseids = null, $discus
  *               ->posts: An array containing the posts to show for this request.
  */
 function forum_get_posts_by_user($user, array $courses, $musthaveaccess = false, $discussionsonly = false, $limitfrom = 0, $limitnum = 50) {
-    global $DB, $USER;
+    global $DB, $USER, $CFG;
 
     $return = new stdClass;
     $return->totalcount = 0;    // The total number of posts that the current user is able to view
@@ -8148,7 +7967,7 @@ function forum_get_posts_by_user($user, array $courses, $musthaveaccess = false,
         } else {
             // Check whether the current user is enrolled or has access to view the course
             // if they don't we immediately have a problem.
-            if (!can_access_course($coursecontext)) {
+            if (!can_access_course($course)) {
                 if ($musthaveaccess) {
                     print_error('errorenrolmentrequired', 'forum');
                 }
@@ -8157,7 +7976,7 @@ function forum_get_posts_by_user($user, array $courses, $musthaveaccess = false,
 
             // Check whether the requested user is enrolled or has access to view the course
             // if they don't we immediately have a problem.
-            if (!can_access_course($coursecontext, $user)) {
+            if (!can_access_course($course, $user)) {
                 if ($musthaveaccess) {
                     print_error('notenrolled', 'forum');
                 }
