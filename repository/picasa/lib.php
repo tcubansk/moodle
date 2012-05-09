@@ -30,19 +30,33 @@ require_once($CFG->libdir.'/googleapi.php');
 
 class repository_picasa extends repository {
     private $subauthtoken = '';
+    private $usesecuretoken = false;
+    private $googleapikey = '';
 
     public function __construct($repositoryid, $context = SYSCONTEXTID, $options = array()) {
         global $USER;
         parent::__construct($repositoryid, $context, $options);
 
+        $this->googleapikey = get_config('picasa', 'googleapikey');
+        $this->usesecuretoken = get_config('picasa', 'usesecure');
+
         // TODO: I wish there was somewhere we could explicitly put this outside of constructor..
         $googletoken = optional_param('token', false, PARAM_RAW);
         if($googletoken){
-            $gauth = new google_authsub(false, $googletoken); // will throw exception if fails
+            $gauth = $this->get_google_authsub(false, $googletoken); // will throw exception if fails
             google_picasa::set_sesskey($gauth->get_sessiontoken(), $USER->id);
         }
         $this->check_login();
     }
+
+    private function get_google_authsub($sessiontoken = '', $authtoken = '', $options = array()) {
+        if ($this->usesecuretoken) {
+            return new google_authsub($sessiontoken, $authtoken, $options, $this->googleapikey);
+        } else {
+            return new google_authsub($sessiontoken, $authtoken, $options, '');
+        }
+    }
+
 
     public function check_login() {
         global $USER;
@@ -51,7 +65,7 @@ class repository_picasa extends repository {
 
         if($sesskey){
             try{
-                $gauth = new google_authsub($sesskey);
+                $gauth = $this->get_google_authsub($sesskey);
                 $this->subauthtoken = $sesskey;
                 return true;
             }catch(Exception $e){
@@ -66,7 +80,7 @@ class repository_picasa extends repository {
     public function print_login(){
         global $CFG;
         $returnurl = $CFG->wwwroot.'/repository/repository_callback.php?callback=yes&repo_id='.$this->id;
-        $authurl = google_authsub::login_url($returnurl, google_picasa::REALM);
+        $authurl = google_authsub::login_url($returnurl, google_picasa::REALM, get_config('picasa', 'usesecure'));
         if($this->options['ajax']){
             $ret = array();
             $popup_btn = new stdClass();
@@ -80,7 +94,7 @@ class repository_picasa extends repository {
     }
 
     public function get_listing($path='', $page = '') {
-        $picasa = new google_picasa(new google_authsub($this->subauthtoken));
+        $picasa = new google_picasa($this->get_google_authsub($this->subauthtoken));
 
         $ret = array();
         $ret['dynload'] = true;
@@ -94,7 +108,7 @@ class repository_picasa extends repository {
     }
 
     public function search($search_text, $page = 0) {
-        $picasa = new google_picasa(new google_authsub($this->subauthtoken));
+        $picasa = new google_picasa($this->get_google_authsub($this->subauthtoken));
 
         $ret = array();
         $ret['manage'] = google_picasa::MANAGE_URL;
@@ -107,7 +121,7 @@ class repository_picasa extends repository {
 
         $token = google_picasa::get_sesskey($USER->id);
 
-        $gauth = new google_authsub($token);
+        $gauth = $this->get_google_authsub($this->subauthtoken);
         // revoke token from google
         $gauth->revoke_session_token();
 
@@ -125,6 +139,30 @@ class repository_picasa extends repository {
     }
     public function supported_returntypes() {
         return (FILE_INTERNAL | FILE_EXTERNAL);
+    }
+
+    public static function type_config_form($mform, $classname='repository_picasa') {
+        global $CFG;
+        parent::type_config_form($mform);
+        $use_secure_text = get_string('usesecure', 'repository_picasa');
+        $googleapikey_text = get_string('googleapikey', 'repository_picasa');
+
+        $use_secure = get_config('picasa', 'usesecure');
+        $googleapikey = get_config('picasa', 'googleapikey');
+
+        if (empty($use_secure)) {
+            $use_secure = '';
+        }
+        if (empty($googleapikey)) {
+            $googleapikey = '';
+        }
+
+        $mform->addElement('checkbox', 'usesecure', $use_secure_text, '', array('value' => $use_secure));
+        $mform->addElement('textarea', 'googleapikey', $googleapikey_text, '', array('value' => $googleapikey));
+    }
+
+    public static function get_type_option_names() {
+        return array('usesecure', 'googleapikey', 'pluginname');
     }
 }
 
